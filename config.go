@@ -1,0 +1,128 @@
+// --- File: config.go ---
+package log
+
+import (
+	"strings"
+)
+
+// Config holds all logger configuration values, populated via config.UnmarshalSubtree
+type Config struct {
+	// Basic settings
+	Level     int64  `toml:"level"`
+	Name      string `toml:"name"`
+	Directory string `toml:"directory"`
+	Format    string `toml:"format"` // "txt" or "json"
+	Extension string `toml:"extension"`
+
+	// Formatting
+	ShowTimestamp bool `toml:"show_timestamp"`
+	ShowLevel     bool `toml:"show_level"`
+
+	// Buffer and size limits
+	BufferSize     int64 `toml:"buffer_size"`       // Channel buffer size
+	MaxSizeMB      int64 `toml:"max_size_mb"`       // Max size per log file
+	MaxTotalSizeMB int64 `toml:"max_total_size_mb"` // Max total size of all logs in dir
+	MinDiskFreeMB  int64 `toml:"min_disk_free_mb"`  // Minimum free disk space required
+
+	// Timers
+	FlushIntervalMs    int64   `toml:"flush_interval_ms"`    // Interval for flushing file buffer
+	TraceDepth         int64   `toml:"trace_depth"`          // Default trace depth (0-10)
+	RetentionPeriodHrs float64 `toml:"retention_period_hrs"` // Hours to keep logs (0=disabled)
+	RetentionCheckMins float64 `toml:"retention_check_mins"` // How often to check retention
+
+	// Disk check settings
+	DiskCheckIntervalMs    int64 `toml:"disk_check_interval_ms"`   // Base interval for disk checks
+	EnableAdaptiveInterval bool  `toml:"enable_adaptive_interval"` // Adjust interval based on log rate
+	MinCheckIntervalMs     int64 `toml:"min_check_interval_ms"`    // Minimum adaptive interval
+	MaxCheckIntervalMs     int64 `toml:"max_check_interval_ms"`    // Maximum adaptive interval
+}
+
+// DefaultConfig returns a LogConfig with sensible defaults.
+// These defaults are primarily used if config registration or loading fails,
+// or before the first configuration is applied. The primary default mechanism
+// is config.Register.
+func DefaultConfig() *Config {
+	return &Config{
+		Level:                  LevelInfo,
+		Name:                   "log",
+		Directory:              "./logs",
+		Format:                 "txt",
+		Extension:              "log",
+		ShowTimestamp:          true,
+		ShowLevel:              true,
+		BufferSize:             1024,
+		MaxSizeMB:              10,
+		MaxTotalSizeMB:         50,
+		MinDiskFreeMB:          100,
+		FlushIntervalMs:        100,
+		TraceDepth:             0,
+		RetentionPeriodHrs:     0.0,
+		RetentionCheckMins:     60.0,
+		DiskCheckIntervalMs:    5000,
+		EnableAdaptiveInterval: true,
+		MinCheckIntervalMs:     100,
+		MaxCheckIntervalMs:     60000,
+	}
+}
+
+// Clone creates a deep copy of the Config.
+// Used internally to avoid modifying the shared config object directly.
+func (c *Config) Clone() *Config {
+	if c == nil {
+		// Should ideally not happen if Load() returns default, but defensive copy
+		return DefaultConfig()
+	}
+	// Create a shallow copy, which is sufficient as all fields are basic types
+	clone := *c
+	return &clone
+}
+
+// validate performs basic sanity checks on the configuration values.
+func (c *Config) validate() error {
+	if strings.TrimSpace(c.Name) == "" {
+		return fmtErrorf("log name cannot be empty")
+	}
+	if c.Format != "txt" && c.Format != "json" {
+		return fmtErrorf("invalid format: '%s' (use txt or json)", c.Format)
+	}
+	if strings.HasPrefix(c.Extension, ".") {
+		return fmtErrorf("extension should not start with dot: %s", c.Extension)
+	}
+	if c.BufferSize <= 0 {
+		return fmtErrorf("buffer_size must be positive: %d", c.BufferSize)
+	}
+	if c.MaxSizeMB < 0 {
+		return fmtErrorf("max_size_mb cannot be negative: %d", c.MaxSizeMB)
+	}
+	if c.MaxTotalSizeMB < 0 {
+		return fmtErrorf("max_total_size_mb cannot be negative: %d", c.MaxTotalSizeMB)
+	}
+	if c.MinDiskFreeMB < 0 {
+		return fmtErrorf("min_disk_free_mb cannot be negative: %d", c.MinDiskFreeMB)
+	}
+	if c.FlushIntervalMs <= 0 {
+		return fmtErrorf("flush_interval_ms must be positive milliseconds: %d", c.FlushIntervalMs)
+	}
+	if c.DiskCheckIntervalMs <= 0 {
+		return fmtErrorf("disk_check_interval_ms must be positive milliseconds: %d", c.DiskCheckIntervalMs)
+	}
+	if c.MinCheckIntervalMs <= 0 {
+		return fmtErrorf("min_check_interval_ms must be positive milliseconds: %d", c.MinCheckIntervalMs)
+	}
+	if c.MaxCheckIntervalMs <= 0 {
+		return fmtErrorf("max_check_interval_ms must be positive milliseconds: %d", c.MaxCheckIntervalMs)
+	}
+	if c.MinCheckIntervalMs > c.MaxCheckIntervalMs {
+		return fmtErrorf("min_check_interval_ms (%d) cannot be greater than max_check_interval_ms (%d)", c.MinCheckIntervalMs, c.MaxCheckIntervalMs)
+	}
+	if c.TraceDepth < 0 || c.TraceDepth > 10 {
+		return fmtErrorf("trace_depth must be between 0 and 10: %d", c.TraceDepth)
+	}
+	if c.RetentionPeriodHrs < 0 {
+		return fmtErrorf("retention_period_hrs cannot be negative: %f", c.RetentionPeriodHrs)
+	}
+	if c.RetentionCheckMins < 0 {
+		// Allow 0 check interval (disables periodic check but not initial)
+	}
+	return nil
+}
