@@ -1,3 +1,4 @@
+// --- File: utility.go ---
 package log
 
 import (
@@ -141,8 +142,8 @@ func validateConfigValue(key string, value interface{}) error {
 	return nil
 }
 
-// parseLevel converts level string to numeric constant.
-func parseLevel(levelStr string) (int64, error) {
+// Level converts level string to numeric constant.
+func Level(levelStr string) (int64, error) {
 	switch strings.ToLower(strings.TrimSpace(levelStr)) {
 	case "debug":
 		return LevelDebug, nil

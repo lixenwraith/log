@@ -1,4 +1,4 @@
-// processor.go
+// --- File: processor.go ---
 package log
 
 import (
@@ -146,7 +146,10 @@ func (l *Logger) processLogs(ch <-chan logRecord) {
 			}
 
 		case <-flushTicker.C:
-			l.performSync()
+			enableSync, _ := l.config.Bool("log.enable_periodic_sync")
+			if enableSync {
+				l.performSync()
+			}
 
 		case <-diskCheckTicker.C:
 			// Periodic disk check
@@ -187,6 +190,10 @@ func (l *Logger) processLogs(ch <-chan logRecord) {
 				logsSinceLastCheck = 0
 				lastCheckTime = time.Now()
 			}
+
+		case confirmChan := <-l.state.flushRequestChan:
+			l.performSync()
+			close(confirmChan) // Signal completion back to the Flush caller
 
 		case <-retentionChan:
 			// Check file retention

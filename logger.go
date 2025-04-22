@@ -1,9 +1,9 @@
+// --- File: logger.go ---
 package log
 
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,9 +42,6 @@ var configDefaults = map[string]interface{}{
 	"log.max_check_interval_ms":    int64(60000),
 }
 
-// Global instance for package-level functions
-var defaultLogger = NewLogger()
-
 // NewLogger creates a new Logger instance with default settings
 func NewLogger() *Logger {
 	l := &Logger{
@@ -70,7 +67,31 @@ func NewLogger() *Logger {
 	close(initialChan)
 	l.state.ActiveLogChannel.Store(initialChan)
 
+	l.state.flushRequestChan = make(chan chan struct{}, 1)
+
 	return l
+}
+
+// LoadConfig loads logger configuration from a file with optional CLI overrides
+func (l *Logger) LoadConfig(path string, args []string) error {
+	configExists, err := l.config.Load(path, args)
+	if err != nil {
+		return err
+	}
+
+	// If no config file exists and no CLI args were provided, there's nothing to apply
+	if !configExists && len(args) == 0 {
+		return nil
+	}
+
+	l.initMu.Lock()
+	defer l.initMu.Unlock()
+	return l.applyAndReconfigureLocked()
+}
+
+// SaveConfig saves the current logger configuration to a file
+func (l *Logger) SaveConfig(path string) error {
+	return l.config.Save(path)
 }
 
 // registerConfigValues registers all configuration parameters with the config instance
@@ -83,35 +104,6 @@ func (l *Logger) registerConfigValues() {
 			fmt.Fprintf(os.Stderr, "log: warning - failed to register config key '%s': %v\n", path, err)
 		}
 	}
-}
-
-// getCurrentLogChannel safely retrieves the current log channel
-func (l *Logger) getCurrentLogChannel() chan logRecord {
-	chVal := l.state.ActiveLogChannel.Load()
-	return chVal.(chan logRecord)
-}
-
-// Init initializes or reconfigures the logger using the provided config.Config instance
-func (l *Logger) Init(cfg *config.Config, basePath string) error {
-	if cfg == nil {
-		l.state.LoggerDisabled.Store(true)
-		return fmtErrorf("config instance cannot be nil")
-	}
-
-	l.initMu.Lock()
-	defer l.initMu.Unlock()
-
-	if l.state.LoggerDisabled.Load() {
-		return fmtErrorf("logger previously failed to initialize and is disabled")
-	}
-
-	// Update configuration from external config
-	if err := l.updateConfigFromExternal(cfg, basePath); err != nil {
-		return err
-	}
-
-	// Apply configuration and reconfigure logger components
-	return l.applyAndReconfigureLocked()
 }
 
 // updateConfigFromExternal updates the logger config from an external config.Config instance
@@ -160,73 +152,6 @@ func (l *Logger) updateConfigFromExternal(extCfg *config.Config, basePath string
 	return nil
 }
 
-// InitWithDefaults initializes the logger with built-in defaults and optional overrides
-func (l *Logger) InitWithDefaults(overrides ...string) error {
-	l.initMu.Lock()
-	defer l.initMu.Unlock()
-
-	if l.state.LoggerDisabled.Load() {
-		return fmtErrorf("logger previously failed to initialize and is disabled")
-	}
-
-	// Apply provided overrides
-	for _, override := range overrides {
-		key, valueStr, err := parseKeyValue(override)
-		if err != nil {
-			return err
-		}
-
-		keyLower := strings.ToLower(key)
-		path := "log." + keyLower
-
-		// Check if this is a valid config key
-		if _, exists := l.config.Get(path); !exists {
-			return fmtErrorf("unknown config key in override: %s", key)
-		}
-
-		// Get current value to determine type for parsing
-		currentVal, found := l.config.Get(path)
-		if !found {
-			return fmtErrorf("failed to get current value for '%s'", key)
-		}
-
-		// Parse according to type
-		var parsedValue interface{}
-		var parseErr error
-
-		switch currentVal.(type) {
-		case int64:
-			parsedValue, parseErr = strconv.ParseInt(valueStr, 10, 64)
-		case string:
-			parsedValue = valueStr
-		case bool:
-			parsedValue, parseErr = strconv.ParseBool(valueStr)
-		case float64:
-			parsedValue, parseErr = strconv.ParseFloat(valueStr, 64)
-		default:
-			return fmtErrorf("unsupported type for key '%s'", key)
-		}
-
-		if parseErr != nil {
-			return fmtErrorf("invalid value format for '%s': %w", key, parseErr)
-		}
-
-		// Validate the parsed value
-		if err := validateConfigValue(keyLower, parsedValue); err != nil {
-			return fmtErrorf("invalid value for '%s': %w", key, err)
-		}
-
-		// Update config with new value
-		err = l.config.Set(path, parsedValue)
-		if err != nil {
-			return fmtErrorf("failed to update config value for '%s': %w", key, err)
-		}
-	}
-
-	// Apply configuration and reconfigure logger components
-	return l.applyAndReconfigureLocked()
-}
-
 // applyAndReconfigureLocked applies the configuration and reconfigures logger components
 // Assumes initMu is held
 func (l *Logger) applyAndReconfigureLocked() error {
@@ -242,6 +167,13 @@ func (l *Logger) applyAndReconfigureLocked() error {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "log: warning - failed to update min_check_interval_ms: %v\n", err)
 		}
+	}
+
+	// Validate config (Basic)
+	currentCfg := l.loadCurrentConfig() // Helper to load struct from l.config
+	if err := currentCfg.validate(); err != nil {
+		l.state.LoggerDisabled.Store(true) // Disable logger on validation failure
+		return fmtErrorf("invalid configuration detected: %w", err)
 	}
 
 	// Ensure log directory exists
@@ -313,189 +245,36 @@ func (l *Logger) applyAndReconfigureLocked() error {
 	return nil
 }
 
-// Default package-level functions that delegate to the default logger
-
-// Init initializes or reconfigures the logger using the provided config.Config instance
-func Init(cfg *config.Config, basePath string) error {
-	return defaultLogger.Init(cfg, basePath)
+// loadCurrentConfig loads the current configuration for validation
+func (l *Logger) loadCurrentConfig() *Config {
+	cfg := &Config{}
+	cfg.Level, _ = l.config.Int64("log.level")
+	cfg.Name, _ = l.config.String("log.name")
+	cfg.Directory, _ = l.config.String("log.directory")
+	cfg.Format, _ = l.config.String("log.format")
+	cfg.Extension, _ = l.config.String("log.extension")
+	cfg.ShowTimestamp, _ = l.config.Bool("log.show_timestamp")
+	cfg.ShowLevel, _ = l.config.Bool("log.show_level")
+	cfg.BufferSize, _ = l.config.Int64("log.buffer_size")
+	cfg.MaxSizeMB, _ = l.config.Int64("log.max_size_mb")
+	cfg.MaxTotalSizeMB, _ = l.config.Int64("log.max_total_size_mb")
+	cfg.MinDiskFreeMB, _ = l.config.Int64("log.min_disk_free_mb")
+	cfg.FlushIntervalMs, _ = l.config.Int64("log.flush_interval_ms")
+	cfg.TraceDepth, _ = l.config.Int64("log.trace_depth")
+	cfg.RetentionPeriodHrs, _ = l.config.Float64("log.retention_period_hrs")
+	cfg.RetentionCheckMins, _ = l.config.Float64("log.retention_check_mins")
+	cfg.DiskCheckIntervalMs, _ = l.config.Int64("log.disk_check_interval_ms")
+	cfg.EnableAdaptiveInterval, _ = l.config.Bool("log.enable_adaptive_interval")
+	cfg.MinCheckIntervalMs, _ = l.config.Int64("log.min_check_interval_ms")
+	cfg.MaxCheckIntervalMs, _ = l.config.Int64("log.max_check_interval_ms")
+	cfg.EnablePeriodicSync, _ = l.config.Bool("log.enable_periodic_sync")
+	return cfg
 }
 
-// InitWithDefaults initializes the logger with built-in defaults and optional overrides
-func InitWithDefaults(overrides ...string) error {
-	return defaultLogger.InitWithDefaults(overrides...)
-}
-
-// Shutdown gracefully closes the logger, attempting to flush pending records
-func Shutdown(timeout time.Duration) error {
-	return defaultLogger.Shutdown(timeout)
-}
-
-// Debug logs a message at debug level
-func Debug(args ...any) {
-	defaultLogger.Debug(args...)
-}
-
-// Info logs a message at info level
-func Info(args ...any) {
-	defaultLogger.Info(args...)
-}
-
-// Warn logs a message at warning level
-func Warn(args ...any) {
-	defaultLogger.Warn(args...)
-}
-
-// Error logs a message at error level
-func Error(args ...any) {
-	defaultLogger.Error(args...)
-}
-
-// DebugTrace logs a debug message with function call trace
-func DebugTrace(depth int, args ...any) {
-	defaultLogger.DebugTrace(depth, args...)
-}
-
-// InfoTrace logs an info message with function call trace
-func InfoTrace(depth int, args ...any) {
-	defaultLogger.InfoTrace(depth, args...)
-}
-
-// WarnTrace logs a warning message with function call trace
-func WarnTrace(depth int, args ...any) {
-	defaultLogger.WarnTrace(depth, args...)
-}
-
-// ErrorTrace logs an error message with function call trace
-func ErrorTrace(depth int, args ...any) {
-	defaultLogger.ErrorTrace(depth, args...)
-}
-
-// Log writes a timestamp-only record without level information
-func Log(args ...any) {
-	defaultLogger.Log(args...)
-}
-
-// Message writes a plain record without timestamp or level info
-func Message(args ...any) {
-	defaultLogger.Message(args...)
-}
-
-// LogTrace writes a timestamp record with call trace but no level info
-func LogTrace(depth int, args ...any) {
-	defaultLogger.LogTrace(depth, args...)
-}
-
-// SaveConfig saves the current logger configuration to a file
-func SaveConfig(path string) error {
-	return defaultLogger.SaveConfig(path)
-}
-
-// LoadConfig loads logger configuration from a file with optional CLI overrides
-func LoadConfig(path string, args []string) error {
-	return defaultLogger.LoadConfig(path, args)
-}
-
-// SaveConfig saves the current logger configuration to a file
-func (l *Logger) SaveConfig(path string) error {
-	return l.config.Save(path)
-}
-
-// LoadConfig loads logger configuration from a file with optional CLI overrides
-func (l *Logger) LoadConfig(path string, args []string) error {
-	configExists, err := l.config.Load(path, args)
-	if err != nil {
-		return err
-	}
-
-	// If no config file exists and no CLI args were provided, there's nothing to apply
-	if !configExists && len(args) == 0 {
-		return nil
-	}
-
-	l.initMu.Lock()
-	defer l.initMu.Unlock()
-	return l.applyAndReconfigureLocked()
-}
-
-// Helper functions
-func (l *Logger) Shutdown(timeout time.Duration) error {
-	// Ensure shutdown runs only once
-	if !l.state.ShutdownCalled.CompareAndSwap(false, true) {
-		return nil
-	}
-
-	// Prevent new logs from being processed or sent
-	l.state.LoggerDisabled.Store(true)
-
-	// If the logger was never initialized, there's nothing to shut down
-	if !l.state.IsInitialized.Load() {
-		l.state.ShutdownCalled.Store(false) // Allow potential future init/shutdown cycle
-		l.state.LoggerDisabled.Store(false)
-		l.state.ProcessorExited.Store(true) // Mark as not running
-		return nil
-	}
-
-	// Signal the processor goroutine to stop by closing its channel
-	l.initMu.Lock()
-	ch := l.getCurrentLogChannel()
-	closedChan := make(chan logRecord) // Create a dummy closed channel
-	close(closedChan)
-	l.state.ActiveLogChannel.Store(closedChan) // Point producers to the dummy channel
-	// Close the actual channel the processor is reading from
-	if ch != closedChan { // Avoid closing the dummy channel itself
-		close(ch)
-	}
-	l.initMu.Unlock()
-
-	// Determine the maximum time to wait for the processor to finish
-	effectiveTimeout := timeout
-	if effectiveTimeout <= 0 {
-		// Use the configured flush interval as the default timeout if none provided
-		flushMs, _ := l.config.Int64("log.flush_interval_ms")
-		effectiveTimeout = time.Duration(flushMs) * time.Millisecond
-	}
-
-	// Wait for the processor goroutine to signal its exit, or until the timeout
-	deadline := time.Now().Add(effectiveTimeout)
-	pollInterval := 10 * time.Millisecond // Check status periodically
-	processorCleanlyExited := false
-	for time.Now().Before(deadline) {
-		if l.state.ProcessorExited.Load() {
-			processorCleanlyExited = true
-			break // Processor finished cleanly
-		}
-		time.Sleep(pollInterval)
-	}
-
-	// Mark the logger as uninitialized
-	l.state.IsInitialized.Store(false)
-
-	// Sync and close the current log file
-	var finalErr error
-	cfPtr := l.state.CurrentFile.Load()
-	if cfPtr != nil {
-		if currentLogFile, ok := cfPtr.(*os.File); ok && currentLogFile != nil {
-			// Attempt to sync data to disk
-			if err := currentLogFile.Sync(); err != nil {
-				finalErr = fmtErrorf("failed to sync log file '%s' during shutdown: %w", currentLogFile.Name(), err)
-			}
-			// Attempt to close the file descriptor
-			if err := currentLogFile.Close(); err != nil {
-				closeErr := fmtErrorf("failed to close log file '%s' during shutdown: %w", currentLogFile.Name(), err)
-				finalErr = combineErrors(finalErr, closeErr) // Combine sync/close errors
-			}
-			// Clear the atomic reference to the file
-			l.state.CurrentFile.Store((*os.File)(nil))
-		}
-	}
-
-	// Report timeout error if processor didn't exit cleanly
-	if !processorCleanlyExited {
-		timeoutErr := fmtErrorf("logger processor did not exit within timeout (%v)", effectiveTimeout)
-		finalErr = combineErrors(finalErr, timeoutErr)
-	}
-
-	return finalErr
+// getCurrentLogChannel safely retrieves the current log channel
+func (l *Logger) getCurrentLogChannel() chan logRecord {
+	chVal := l.state.ActiveLogChannel.Load()
+	return chVal.(chan logRecord)
 }
 
 // Logger instance methods for logging at different levels
@@ -613,7 +392,7 @@ func (l *Logger) log(flags int64, level int64, depth int64, args ...any) {
 	// Get trace if needed
 	var trace string
 	if depth > 0 {
-		const skipTrace = 3 // log.Info -> logInternal -> getTrace (Adjust if call stack changes)
+		const skipTrace = 3 // log.Info -> log -> getTrace (Adjust if call stack changes)
 		trace = getTrace(depth, skipTrace)
 	}
 

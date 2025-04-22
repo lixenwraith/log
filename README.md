@@ -130,27 +130,28 @@ func main() {
 
 The `log` package is configured via keys registered with the `config.Config` instance passed to `log.Init`. `log.Init` expects these keys relative to the `basePath` argument.
 
-| Key (`basePath` + Key)          | Type      | Description                                                          | Default Value (Registered by `log.Init`) |
-| :------------------------------ | :-------- | :------------------------------------------------------------------- | :--------------------------------------- |
-| `level`                         | `int64`   | Minimum log level (-4=Debug, 0=Info, 4=Warn, 8=Error)                | `0` (LevelInfo)                          |
-| `name`                          | `string`  | Base name for log files                                              | `"log"`                                  |
-| `directory`                     | `string`  | Directory to store log files                                         | `"./logs"`                               |
-| `format`                        | `string`  | Log file format (`"txt"`, `"json"`)                                  | `"txt"`                                  |
-| `extension`                     | `string`  | Log file extension (e.g., `"log"`, `"app"`)                          | `"log"`                                  |
-| `show_timestamp`                | `bool`    | Show timestamp in log entries                                        | `true`                                   |
-| `show_level`                    | `bool`    | Show log level in entries                                            | `true`                                   |
-| `buffer_size`                   | `int64`   | Channel buffer capacity for log records                              | `1024`                                   |
-| `max_size_mb`                   | `int64`   | Max size (MB) per log file before rotation                           | `10`                                     |
-| `max_total_size_mb`             | `int64`   | Max total size (MB) of log directory (0=unlimited)                   | `50`                                     |
-| `min_disk_free_mb`              | `int64`   | Min required free disk space (MB) (0=unlimited)                      | `100`                                    |
-| `flush_interval_ms`             | `int64`   | Interval (ms) to force flush buffer to disk via timer                | `100`                                    |
-| `trace_depth`                   | `int64`   | Function call trace depth (0=disabled, 1-10)                         | `0`                                      |
-| `retention_period_hrs`          | `float64` | Hours to keep log files (0=disabled)                                 | `0.0`                                    |
-| `retention_check_mins`          | `float64` | Minutes between retention checks via timer (if enabled)              | `60.0`                                   |
-| `disk_check_interval_ms`        | `int64`   | Base interval (ms) for periodic disk space checks via timer          | `5000`                                   |
-| `enable_adaptive_interval`      | `bool`    | Adjust disk check interval based on load (within min/max bounds)     | `true`                                   |
-| `min_check_interval_ms`         | `int64`   | Minimum interval (ms) for adaptive disk checks                       | `100`                                    |
-| `max_check_interval_ms`         | `int64`   | Maximum interval (ms) for adaptive disk checks                       | `60000`                                  |
+| Key (`basePath` + Key)     | Type      | Description                                                      | Default Value (Registered by `log.Init`) |
+|:---------------------------| :-------- |:-----------------------------------------------------------------|:-----------------------------------------|
+| `level`                    | `int64`   | Minimum log level (-4=Debug, 0=Info, 4=Warn, 8=Error)            | `0` (LevelInfo)                          |
+| `name`                     | `string`  | Base name for log files                                          | `"log"`                                  |
+| `directory`                | `string`  | Directory to store log files                                     | `"./logs"`                               |
+| `format`                   | `string`  | Log file format (`"txt"`, `"json"`)                              | `"txt"`                                  |
+| `extension`                | `string`  | Log file extension (e.g., `"log"`, `"app"`)                      | `"log"`                                  |
+| `show_timestamp`           | `bool`    | Show timestamp in log entries                                    | `true`                                   |
+| `show_level`               | `bool`    | Show log level in entries                                        | `true`                                   |
+| `buffer_size`              | `int64`   | Channel buffer capacity for log records                          | `1024`                                   |
+| `max_size_mb`              | `int64`   | Max size (MB) per log file before rotation                       | `10`                                     |
+| `max_total_size_mb`        | `int64`   | Max total size (MB) of log directory (0=unlimited)               | `50`                                     |
+| `min_disk_free_mb`         | `int64`   | Min required free disk space (MB) (0=unlimited)                  | `100`                                    |
+| `flush_interval_ms`        | `int64`   | Interval (ms) to force flush buffer to disk via timer            | `100`                                    |
+| `trace_depth`              | `int64`   | Function call trace depth (0=disabled, 1-10)                     | `0`                                      |
+| `retention_period_hrs`     | `float64` | Hours to keep log files (0=disabled)                             | `0.0`                                    |
+| `retention_check_mins`     | `float64` | Minutes between retention checks via timer (if enabled)          | `60.0`                                   |
+| `disk_check_interval_ms`   | `int64`   | Base interval (ms) for periodic disk space checks via timer      | `5000`                                   |
+| `enable_adaptive_interval` | `bool`    | Adjust disk check interval based on load (within min/max bounds) | `true`                                   |
+| `enable_periodic_sync`     | `bool`    | Periodic sync with disk based on flush interval                  | `false`                                  |
+| `min_check_interval_ms`    | `int64`   | Minimum interval (ms) for adaptive disk checks                   | `100`                                    |
+| `max_check_interval_ms`    | `int64`   | Maximum interval (ms) for adaptive disk checks                   | `60000`                                  |
 
 **Example TOML (`config.toml`)**
 

@@ -33,6 +33,7 @@ type Config struct {
 	// Disk check settings
 	DiskCheckIntervalMs    int64 `toml:"disk_check_interval_ms"`   // Base interval for disk checks
 	EnableAdaptiveInterval bool  `toml:"enable_adaptive_interval"` // Adjust interval based on log rate
+	EnablePeriodicSync     bool  `toml:"enable_periodic_sync"`     // Periodic sync with disk
 	MinCheckIntervalMs     int64 `toml:"min_check_interval_ms"`    // Minimum adaptive interval
 	MaxCheckIntervalMs     int64 `toml:"max_check_interval_ms"`    // Maximum adaptive interval
 }
@@ -60,6 +61,7 @@ func DefaultConfig() *Config {
 		RetentionCheckMins:     60.0,
 		DiskCheckIntervalMs:    5000,
 		EnableAdaptiveInterval: true,
+		EnablePeriodicSync:     false,
 		MinCheckIntervalMs:     100,
 		MaxCheckIntervalMs:     60000,
 	}
