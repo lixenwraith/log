@@ -53,6 +53,8 @@ var levels = []int64{
 	log.LevelError,
 }
 
+var logger *log.Logger
+
 func generateRandomMessage(size int) string {
 	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 "
 	var sb strings.Builder
@@ -78,13 +80,13 @@ func logBurst(burstID int) {
 		}
 		switch level {
 		case log.LevelDebug:
-			log.Debug(args...)
+			logger.Debug(args...)
 		case log.LevelInfo:
-			log.Info(args...)
+			logger.Info(args...)
 		case log.LevelWarn:
-			log.Warn(args...)
+			logger.Warn(args...)
 		case log.LevelError:
-			log.Error(args...)
+			logger.Error(args...)
 		}
 	}
 }
@@ -126,7 +128,8 @@ func main() {
 	}
 
 	// --- Initialize Logger ---
-	err = log.Init(cfg, configBasePath)
+	logger = log.NewLogger()
+	err = logger.Init(cfg, configBasePath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		os.Exit(1)
@@ -195,7 +198,7 @@ endLoop:
 	// --- Shutdown Logger ---
 	fmt.Println("Shutting down logger (allowing up to 10s)...")
 	shutdownTimeout := 10 * time.Second
-	err = log.Shutdown(shutdownTimeout)
+	err = logger.Shutdown(shutdownTimeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Logger shutdown error: %v\n", err)
 	} else {

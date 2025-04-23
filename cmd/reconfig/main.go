@@ -12,8 +12,10 @@ import (
 func main() {
 	var count atomic.Int64
 
+	logger := log.NewLogger()
+
 	// Initialize the logger with defaults first
-	err := log.InitWithDefaults()
+	err := logger.InitWithDefaults()
 	if err != nil {
 		fmt.Printf("Initial Init error: %v\n", err)
 		return
@@ -22,7 +24,7 @@ func main() {
 	// Log something constantly
 	go func() {
 		for i := 0; ; i++ {
-			log.Info("Test log", i)
+			logger.Info("Test log", i)
 			count.Add(1)
 			time.Sleep(time.Millisecond)
 		}
@@ -32,7 +34,7 @@ func main() {
 	for i := 0; i < 10; i++ {
 		// Use different buffer sizes to trigger channel recreation
 		bufSize := fmt.Sprintf("buffer_size=%d", 100*(i+1))
-		err := log.InitWithDefaults(bufSize)
+		err := logger.InitWithDefaults(bufSize)
 		if err != nil {
 			fmt.Printf("Init error: %v\n", err)
 		}
@@ -42,14 +44,14 @@ func main() {
 
 	// Check if we see any inconsistency
 	time.Sleep(500 * time.Millisecond)
-	fmt.Printf("Total logs attempted: %d\n", count.Load())
+	fmt.Printf("Total logger. attempted: %d\n", count.Load())
 
-	// Gracefully shut down the logger
-	err = log.Shutdown(time.Second)
+	// Gracefully shut down the logger.er
+	err = logger.Shutdown(time.Second)
 	if err != nil {
 		fmt.Printf("Shutdown error: %v\n", err)
 	}
 
-	// Check for any error messages in the log files
-	// or dropped log count
+	// Check for any error messages in the logger.files
+	// or dropped logger.count
 }

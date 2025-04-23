@@ -1,26 +1,25 @@
 # Log
 
-A robust, buffered, rotating file logger for Go applications, configured via the [LixenWraith/config](https://github.com/LixenWraith/config) package. Designed for performance and reliability with features like disk management, log retention, and asynchronous processing using atomic operations and channels.
+A high-performance, buffered, rotating file logger for Go applications, configured via the [LixenWraith/config](https://github.com/LixenWraith/config) package. Designed for production-grade reliability with features like disk management, log retention, and lock-free asynchronous processing using atomic operations and channels.
 
 ## Features
 
--   **Buffered Asynchronous Logging:** Logs are sent non-blockingly to a buffered channel, processed by a dedicated background goroutine for minimal application impact. Uses atomic operations for state management, avoiding mutexes in the logging hot path.
--   **External Configuration:** Fully configured using `github.com/LixenWraith/config`, allowing settings via TOML files and CLI overrides managed centrally.
--   **Automatic File Rotation:** Rotates log files when they reach a configurable size (`max_size_mb`).
--   **Disk Space Management:**
-    -   Monitors total log directory size against a limit (`max_total_size_mb`).
-    -   Monitors available disk space against a minimum requirement (`min_disk_free_mb`).
-    -   Automatically attempts to delete the oldest log files (by modification time) to stay within limits during periodic checks or when writes fail.
-    -   Temporarily pauses logging if space cannot be freed, logging an error message.
--   **Adaptive Disk Check Interval:** Optionally adjusts the frequency of disk space checks based on logging load (`enable_adaptive_interval`, `disk_check_interval_ms`, `min_check_interval_ms`, `max_check_interval_ms`) to balance performance and responsiveness.
--   **Periodic Flushing:** Automatically flushes the log buffer to disk at a configured interval (`flush_interval_ms`) using a timer.
--   **Log Retention:** Automatically deletes log files older than a configured duration (`retention_period_hrs`), checked periodically via a timer (`retention_check_mins`). Relies on file modification time.
--   **Dropped Log Detection:** If the internal buffer fills under high load, logs are dropped, and a summary message indicating the number of drops is logged later.
--   **Structured Logging:** Supports both plain text (`txt`) and `json` output formats.
--   **Standard Log Levels:** Provides `Debug`, `Info`, `Warn`, `Error` levels (values match `slog`).
--   **Function Call Tracing:** Optionally include function call traces in logs with configurable depth (`trace_depth`) or enable temporarily via `*Trace` functions.
--   **Simplified API:** Public logging functions (`log.Info`, `log.Debug`, etc.) do not require `context.Context`.
--   **Graceful Shutdown:** `log.Shutdown` signals the background processor to stop by closing the log channel. It then waits for a *brief, fixed duration* (best-effort) before closing the file handle. Note: This is a best-effort flush; logs might be lost if flushing takes longer than the internal wait or if the application exits abruptly.
+-   **Lock-free Asynchronous Logging:** Non-blocking log operations with minimal application impact. Logs are sent via a buffered channel, processed by a dedicated background goroutine. Uses atomic operations for state management, avoiding mutexes in the hot path.
+-   **External Configuration:** Fully configured using `github.com/LixenWraith/config`, supporting both TOML files and CLI overrides with centralized management.
+-   **Automatic File Rotation:** Seamlessly rotates log files when they reach configurable size limits (`max_size_mb`), generating timestamped filenames.
+-   **Comprehensive Disk Management:**
+    -   Monitors total log directory size against configured limits (`max_total_size_mb`)
+    -   Enforces minimum free disk space requirements (`min_disk_free_mb`)
+    -   Automatically prunes oldest log files to maintain space constraints
+    -   Implements recovery behavior when disk space is exhausted
+-   **Adaptive Resource Monitoring:** Dynamically adjusts disk check frequency based on logging volume (`enable_adaptive_interval`, `min_check_interval_ms`, `max_check_interval_ms`), optimizing performance under varying loads.
+-   **Reliable Buffer Management:** Periodic buffer flushing with configurable intervals (`flush_interval_ms`). Detects and reports dropped logs during high-volume scenarios.
+-   **Automated Log Retention:** Time-based log file cleanup with configurable retention periods (`retention_period_hrs`, `retention_check_mins`).
+-   **Structured Logging:** Support for both human-readable text (`txt`) and machine-parseable (`json`) output formats with consistent field handling.
+-   **Comprehensive Log Levels:** Standard severity levels (Debug, Info, Warn, Error) with numeric values compatible with other logging systems.
+-   **Function Call Tracing:** Optional function call stack traces with configurable depth (`trace_depth`) for debugging complex execution flows.
+-   **Clean API Design:** Straightforward logging methods that don't require `context.Context` parameters.
+-   **Graceful Shutdown:** Managed termination with best-effort flushing to minimize log data loss during application shutdown.
 
 ## Installation
 
@@ -28,8 +27,6 @@ A robust, buffered, rotating file logger for Go applications, configured via the
 go get github.com/LixenWraith/log
 go get github.com/LixenWraith/config
 ```
-
-The `config` package has its own dependencies which will be fetched automatically.
 
 ## Basic Usage
 
@@ -58,7 +55,7 @@ const logConfigPath = "logging" // Base path for logger settings in TOML/config
   extension = "log"
   max_size_mb = 50
   flush_interval_ms = 100
-  disk_check_interval_ms = 5000 # Example: Check disk every 5s
+  disk_check_interval_ms = 5000 # Check disk every 5s
   enable_adaptive_interval = true
   # Other settings will use defaults registered by log.Init
 */
@@ -123,37 +120,36 @@ func main() {
 	}
 	fmt.Println("Shutdown complete.")
 }
-
 ```
 
 ## Configuration
 
 The `log` package is configured via keys registered with the `config.Config` instance passed to `log.Init`. `log.Init` expects these keys relative to the `basePath` argument.
 
-| Key (`basePath` + Key)     | Type      | Description                                                      | Default Value (Registered by `log.Init`) |
-|:---------------------------| :-------- |:-----------------------------------------------------------------|:-----------------------------------------|
-| `level`                    | `int64`   | Minimum log level (-4=Debug, 0=Info, 4=Warn, 8=Error)            | `0` (LevelInfo)                          |
-| `name`                     | `string`  | Base name for log files                                          | `"log"`                                  |
-| `directory`                | `string`  | Directory to store log files                                     | `"./logs"`                               |
-| `format`                   | `string`  | Log file format (`"txt"`, `"json"`)                              | `"txt"`                                  |
-| `extension`                | `string`  | Log file extension (e.g., `"log"`, `"app"`)                      | `"log"`                                  |
-| `show_timestamp`           | `bool`    | Show timestamp in log entries                                    | `true`                                   |
-| `show_level`               | `bool`    | Show log level in entries                                        | `true`                                   |
-| `buffer_size`              | `int64`   | Channel buffer capacity for log records                          | `1024`                                   |
-| `max_size_mb`              | `int64`   | Max size (MB) per log file before rotation                       | `10`                                     |
-| `max_total_size_mb`        | `int64`   | Max total size (MB) of log directory (0=unlimited)               | `50`                                     |
-| `min_disk_free_mb`         | `int64`   | Min required free disk space (MB) (0=unlimited)                  | `100`                                    |
-| `flush_interval_ms`        | `int64`   | Interval (ms) to force flush buffer to disk via timer            | `100`                                    |
-| `trace_depth`              | `int64`   | Function call trace depth (0=disabled, 1-10)                     | `0`                                      |
-| `retention_period_hrs`     | `float64` | Hours to keep log files (0=disabled)                             | `0.0`                                    |
-| `retention_check_mins`     | `float64` | Minutes between retention checks via timer (if enabled)          | `60.0`                                   |
-| `disk_check_interval_ms`   | `int64`   | Base interval (ms) for periodic disk space checks via timer      | `5000`                                   |
-| `enable_adaptive_interval` | `bool`    | Adjust disk check interval based on load (within min/max bounds) | `true`                                   |
-| `enable_periodic_sync`     | `bool`    | Periodic sync with disk based on flush interval                  | `false`                                  |
-| `min_check_interval_ms`    | `int64`   | Minimum interval (ms) for adaptive disk checks                   | `100`                                    |
-| `max_check_interval_ms`    | `int64`   | Maximum interval (ms) for adaptive disk checks                   | `60000`                                  |
+| Key (`basePath` + Key)     | Type      | Description                                                      | Default Value |
+|:---------------------------| :-------- |:-----------------------------------------------------------------|:--------------|
+| `level`                    | `int64`   | Minimum log level (-4=Debug, 0=Info, 4=Warn, 8=Error)            | `0` (Info)    |
+| `name`                     | `string`  | Base name for log files                                          | `"log"`       |
+| `directory`                | `string`  | Directory to store log files                                     | `"./logs"`    |
+| `format`                   | `string`  | Log file format (`"txt"`, `"json"`)                              | `"txt"`       |
+| `extension`                | `string`  | Log file extension (without dot)                                 | `"log"`       |
+| `show_timestamp`           | `bool`    | Show timestamp in log entries                                    | `true`        |
+| `show_level`               | `bool`    | Show log level in entries                                        | `true`        |
+| `buffer_size`              | `int64`   | Channel buffer capacity for log records                          | `1024`        |
+| `max_size_mb`              | `int64`   | Max size (MB) per log file before rotation                       | `10`          |
+| `max_total_size_mb`        | `int64`   | Max total size (MB) of log directory (0=unlimited)               | `50`          |
+| `min_disk_free_mb`         | `int64`   | Min required free disk space (MB) (0=unlimited)                  | `100`         |
+| `flush_interval_ms`        | `int64`   | Interval (ms) to force flush buffer to disk via timer            | `100`         |
+| `trace_depth`              | `int64`   | Function call trace depth (0=disabled, 1-10)                     | `0`           |
+| `retention_period_hrs`     | `float64` | Hours to keep log files (0=disabled)                             | `0.0`         |
+| `retention_check_mins`     | `float64` | Minutes between retention checks via timer (if enabled)          | `60.0`        |
+| `disk_check_interval_ms`   | `int64`   | Base interval (ms) for periodic disk space checks via timer      | `5000`        |
+| `enable_adaptive_interval` | `bool`    | Adjust disk check interval based on load (within min/max bounds) | `true`        |
+| `enable_periodic_sync`     | `bool`    | Periodic sync with disk based on flush interval                  | `false`       |
+| `min_check_interval_ms`    | `int64`   | Minimum interval (ms) for adaptive disk checks                   | `100`         |
+| `max_check_interval_ms`    | `int64`   | Maximum interval (ms) for adaptive disk checks                   | `60000`       |
 
-**Example TOML (`config.toml`)**
+**Example TOML Configuration (`app_config.toml`)**
 
 ```toml
 # Main application settings
@@ -180,36 +176,27 @@ app_name = "My Service"
   host = "db.example.com"
 ```
 
-Your application would then initialize the logger like this:
-
-```go
-cfg := config.New()
-cfg.Load("config.toml", os.Args[1:]) // Load from file & CLI
-log.Init(cfg, "logging")             // Use "logging" as base path
-cfg.Save("config.toml")              // Save merged config
-```
-
 ## API Reference
 
 ### Initialization
 
 -   **`Init(cfg *config.Config, basePath string) error`**
-    Initializes or reconfigures the logger using settings from the provided `config.Config` instance under `basePath`. Registers required keys with defaults if not present. Handles reconfiguration safely, potentially restarting the background processor goroutine (e.g., if `buffer_size` changes). Must be called before logging. Thread-safe.
+    Initializes or reconfigures the logger using settings from the provided `config.Config` instance under `basePath`. Registers required keys with defaults if not present. Thread-safe.
 -   **`InitWithDefaults(overrides ...string) error`**
-    Initializes or reconfigures the logger using built-in defaults, applying optional overrides provided as "key=value" strings. Useful for simple setups without a config file. Thread-safe.
+    Initializes the logger using built-in defaults, applying optional overrides provided as "key=value" strings. Thread-safe.
 
 ### Logging Functions
 
-These functions accept `...any` arguments, typically used as key-value pairs for structured logging (e.g., `"user_id", 123, "status", "active"`). They are non-blocking and read configuration/state using atomic operations.
+These methods accept `...any` arguments, typically used as key-value pairs for structured logging (e.g., `"user_id", 123, "status", "active"`). All logging functions are non-blocking and use atomic operations for state checks.
 
--   **`Debug(args ...any)`**: Logs at Debug level.
--   **`Info(args ...any)`**: Logs at Info level.
--   **`Warn(args ...any)`**: Logs at Warn level.
--   **`Error(args ...any)`**: Logs at Error level.
+-   **`Debug(args ...any)`**: Logs at Debug level (-4).
+-   **`Info(args ...any)`**: Logs at Info level (0).
+-   **`Warn(args ...any)`**: Logs at Warn level (4).
+-   **`Error(args ...any)`**: Logs at Error level (8).
 
 ### Trace Logging Functions
 
-Temporarily enable function call tracing for a single log entry.
+Temporarily enable function call tracing for a single log entry, regardless of the configured `trace_depth`.
 
 -   **`DebugTrace(depth int, args ...any)`**: Logs Debug with trace.
 -   **`InfoTrace(depth int, args ...any)`**: Logs Info with trace.
@@ -219,52 +206,69 @@ Temporarily enable function call tracing for a single log entry.
 
 ### Other Logging Variants
 
--   **`Log(args ...any)`**: Logs with timestamp, no level (uses Info internally), no trace.
--   **`Message(args ...any)`**: Logs raw message, no timestamp, no level, no trace.
+-   **`Log(args ...any)`**: Logs with timestamp only, no level (uses Info internally).
+-   **`Message(args ...any)`**: Logs raw message without timestamp or level.
 -   **`LogTrace(depth int, args ...any)`**: Logs with timestamp and trace, no level.
 
-### Shutdown
+### Shutdown and Control
 
 -   **`Shutdown(timeout time.Duration) error`**
-    Attempts to gracefully shut down the logger. Sets atomic flags to prevent new logs, closes the internal log channel to signal the background processor, waits for a *brief fixed duration* (currently using the `flush_interval_ms` configuration value, `timeout` argument is used as a default if the interval is <= 0), and then closes the current log file. Returns `nil` on success or an error if file operations fail. Note: This provides a *best-effort* flush; logs might be lost if disk I/O is slow or the application exits too quickly after calling Shutdown.
+    Gracefully shuts down the logger. Signals the processor to stop, waits briefly for pending logs to flush, then closes file handles. Returns error details if closing operations fail.
+
+-   **`Flush(timeout time.Duration) error`**
+    Explicitly triggers a sync of the current log file buffer to disk and waits for completion or timeout.
 
 ### Constants
 
--   **`LevelDebug`, `LevelInfo`, `LevelWarn`, `LevelError` (`int64`)**: Log level constants.
+-   **`LevelDebug (-4)`, `LevelInfo (0)`, `LevelWarn (4)`, `LevelError (8)` (`int64`)**: Log level constants.
+-   **`FlagShowTimestamp`, `FlagShowLevel`, `FlagDefault`**: Record flag constants controlling output format.
 
-## Implementation Details & Behavior
+## Implementation Details
 
--   **Asynchronous Processing:** Log calls (`log.Info`, etc.) are non-blocking. They format a `logRecord` and attempt a non-blocking send to an internal buffered channel (`ActiveLogChannel`). A single background goroutine (`processLogs`) reads from this channel, serializes the record (to TXT or JSON using a reusable buffer), and writes it to the current log file.
--   **Configuration Source:** Relies on an initialized `github.com/LixenWraith/config.Config` instance passed to `log.Init` or uses internal defaults with `InitWithDefaults`. It registers expected keys with "log." prefix and retrieves values using the config package's type-specific accessors (Int64, String, Bool, Float64).
--   **State Management:** Uses `sync.Mutex` (`initMu`) *only* to protect initialization and reconfiguration logic. Uses `sync/atomic` variables extensively for runtime state (`IsInitialized`, `CurrentFile`, `CurrentSize`, `DroppedLogs`), allowing lock-free reads in logging functions and the processor loop.
--   **Timers:** Uses `time.Ticker` internally for:
-    *   Periodic buffer flushing (`flush_interval_ms`).
-    *   Periodic log retention checks (`retention_check_mins`).
-    *   Periodic and potentially adaptive disk space checks (`disk_check_interval_ms`, etc.).
--   **File Rotation:** Triggered synchronously within `processLogs` when writing a record would exceed `max_size_mb`. The old file is closed, a new one is created with a timestamped name, and the atomic `CurrentFile` pointer and `CurrentSize` are updated.
--   **Disk/Retention Checks:**
-    *   `performDiskCheck` is called periodically by a timer and reactively if writes fail or a byte threshold is crossed. It checks total size and free space limits. If limits are exceeded *and* `forceCleanup` is true (for periodic checks), it calls `cleanOldLogs`. If checks fail, `DiskStatusOK` is set to false, causing subsequent logs to be dropped until the condition resolves.
-    *   `cleanOldLogs` deletes the oldest files (by modification time, skipping the current file) until enough space is freed or no more files can be deleted.
-    *   `cleanExpiredLogs` is called periodically by a timer based on `retention_check_mins`. It deletes files whose modification time is older than `retention_period_hrs`.
--   **Shutdown Process:**
-    1.  `Shutdown` sets atomic flags (`ShutdownCalled`, `LoggerDisabled`) to prevent new logs.
-    2.  It closes the current `ActiveLogChannel` (obtained via atomic load).
-    3.  It performs a *fixed short sleep* based on the configured `flush_interval_ms` as a best-effort attempt to allow the processor goroutine time to process remaining items in the channel buffer before the file is closed.
-    4.  The `processLogs` goroutine detects the closed channel, performs a final file sync, and exits.
-    5.  `Shutdown` performs final `Sync` and `Close` on the log file handle after the sleep.
+-   **Lock-Free Hot Path:** Log methods (`Info`, `Debug`, etc.) operate without locks, using atomic operations to check logger state and non-blocking channel sends. Only initialization, reconfiguration, and shutdown use a mutex.
 
-## Limitations, Caveats & Failure Modes
+-   **Channel-Based Architecture:** Log records flow through a buffered channel from producer methods to a single consumer goroutine, preventing contention and serializing file I/O operations.
 
--   **Dependency:** Requires `github.com/LixenWraith/config` for configuration via `log.Init`.
+-   **Adaptive Resource Management:**
+    - Disk checks run periodically via timer and reactively when write volume thresholds are crossed
+    - Check frequency automatically adjusts based on logging rate when `enable_adaptive_interval` is enabled
+    - Intelligently backs off during low activity and increases responsiveness during high volume
+
+-   **File Management:**
+    - Log files are rotated when `max_size_mb` is exceeded, with new files named using timestamps
+    - Oldest files (by modification time) are automatically pruned when space limits are approached
+    - Files older than `retention_period_hrs` are periodically removed
+
+-   **Recovery Behavior:** When disk issues occur, the logger temporarily pauses new logs and attempts recovery on subsequent operations, logging one disk warning message to prevent error spam.
+
+-   **Graceful Shutdown Flow:**
+    1. Sets atomic flags to prevent new logs
+    2. Closes the active log channel to signal processor shutdown
+    3. Waits briefly for processor to finish pending records
+    4. Performs final sync and closes the file handle
+
+## Performance Considerations
+
+-   **Non-blocking Design:** The logger is designed to have minimal impact on application performance, with non-blocking log operations and buffered processing.
+
+-   **Memory Efficiency:** Uses a reusable buffer for serialization, avoiding unnecessary allocations when formatting log entries.
+
+-   **Disk I/O Management:** Batches writes and intelligently schedules disk operations to minimize I/O overhead while maintaining data safety.
+
+-   **Concurrent Safety:** Thread-safe through careful use of atomic operations, minimizing mutex usage to initialization and shutdown paths only.
+
+## Caveats & Limitations
+
 -   **Log Loss Scenarios:**
-    -   **Buffer Full:** If the application generates logs faster than they can be written to disk, `ActiveLogChannel` fills up. Subsequent log calls will drop messages until space becomes available. A `"Logs were dropped"` message will be logged later. Increase `buffer_size` or reduce logging volume.
-    -   **Shutdown:** The `Shutdown` function uses a brief, fixed wait, not a guarantee that all logs are flushed. Logs remaining in the buffer or OS buffers after `Shutdown` returns might be lost, especially under heavy load or slow disk I/O. Ensure critical logs are flushed before shutdown if necessary (though this logger doesn't provide an explicit flush mechanism).
-    -   **Application Exit:** If the application exits abruptly *before* or *during* `log.Shutdown`, buffered logs will likely be lost.
-    -   **Disk Full (Unrecoverable):** If `performDiskCheck` detects low space and `cleanOldLogs` *cannot* free enough space (e.g., no old files to delete, permissions issues), `DiskStatusOK` is set to false. Subsequent logs are dropped until the condition resolves. An error message is logged to stderr *once* when this state is entered.
--   **Configuration Errors:** `log.Init` or `InitWithDefaults` will return an error and fail if configuration values are invalid (e.g., negative `max_size_mb`, invalid `format`, bad override string) or if the `config.Config` instance is `nil` (for `Init`). The application must handle these errors.
--   **Cleanup Race Conditions:** Under high load with frequent rotation/cleanup, benign `"failed to remove old log file ... no such file or directory"` errors might appear in stderr if multiple cleanup attempts target the same file.
--   **Retention Accuracy:** Log retention is based on file **modification time**. External actions modifying old log files could interfere with accurate retention.
--   **Reconfiguration:** Changing `buffer_size` restarts the background processor, involving closing the old channel and creating a new one. Logs sent during this brief transition might be dropped. Other configuration changes are applied live where possible via atomic updates.
+    -   **Buffer Saturation:** Under extreme load, logs may be dropped if the internal buffer fills faster than records can be processed. A summary message will be logged once capacity is available again.
+    -   **Shutdown Race:** The `Shutdown` function provides a best-effort attempt to process remaining logs, but cannot guarantee all buffered logs will be written if the application terminates quickly.
+    -   **Persistent Disk Issues:** If disk space cannot be reclaimed through cleanup, logs will be dropped until the condition is resolved.
+
+-   **Configuration Dependencies:** Requires the `github.com/LixenWraith/config` package for advanced configuration management.
+
+-   **Retention Accuracy:** Log retention relies on file modification times, which could be affected by external file system operations.
+
+-   **Reconfiguration Impact:** Changing buffer size during runtime requires restarting the background processor, which may cause a brief period where logs could be dropped.
 
 ## License
 

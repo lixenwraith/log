@@ -19,29 +19,6 @@ type Logger struct {
 	serializer *serializer // Encapsulated serializer instance
 }
 
-// configDefaults holds the default values for logger configuration
-var configDefaults = map[string]interface{}{
-	"log.level":                    LevelInfo,
-	"log.name":                     "log",
-	"log.directory":                "./logs",
-	"log.format":                   "txt",
-	"log.extension":                "log",
-	"log.show_timestamp":           true,
-	"log.show_level":               true,
-	"log.buffer_size":              int64(1024),
-	"log.max_size_mb":              int64(10),
-	"log.max_total_size_mb":        int64(50),
-	"log.min_disk_free_mb":         int64(100),
-	"log.flush_interval_ms":        int64(100),
-	"log.trace_depth":              int64(0),
-	"log.retention_period_hrs":     float64(0.0),
-	"log.retention_check_mins":     float64(60.0),
-	"log.disk_check_interval_ms":   int64(5000),
-	"log.enable_adaptive_interval": true,
-	"log.min_check_interval_ms":    int64(100),
-	"log.max_check_interval_ms":    int64(60000),
-}
-
 // NewLogger creates a new Logger instance with default settings
 func NewLogger() *Logger {
 	l := &Logger{
@@ -96,37 +73,39 @@ func (l *Logger) SaveConfig(path string) error {
 
 // registerConfigValues registers all configuration parameters with the config instance
 func (l *Logger) registerConfigValues() {
-	// Register each configuration value with its default
-	for path, defaultValue := range configDefaults {
-		err := l.config.Register(path, defaultValue)
-		if err != nil {
-			// If registration fails, we'll handle it gracefully
-			fmt.Fprintf(os.Stderr, "log: warning - failed to register config key '%s': %v\n", path, err)
-		}
+	// Register the entire config struct at once
+	err := l.config.RegisterStruct("log.", defaultConfig)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "log: warning - failed to register config values: %v\n", err)
 	}
 }
 
 // updateConfigFromExternal updates the logger config from an external config.Config instance
 func (l *Logger) updateConfigFromExternal(extCfg *config.Config, basePath string) error {
-	// For each config key, get value from external config and update local config
-	for path := range configDefaults {
-		// Extract the local name without the "log." prefix
-		localName := strings.TrimPrefix(path, "log.")
+	// Get our registered config paths (already registered during initialization)
+	registeredPaths := l.config.GetRegisteredPaths("log.")
+	if len(registeredPaths) == 0 {
+		// Register defaults first if not already done
+		l.registerConfigValues()
+		registeredPaths = l.config.GetRegisteredPaths("log.")
+	}
 
-		// Create the full path for the external config
-		fullPath := localName
-		if basePath != "" {
-			fullPath = basePath + "." + localName
+	// For each registered path
+	for path := range registeredPaths {
+		// Extract local name and build external path
+		localName := strings.TrimPrefix(path, "log.")
+		fullPath := basePath + "." + localName
+		if basePath == "" {
+			fullPath = localName
 		}
 
-		// Get current value from our config to use as default in external config
+		// Get current value to use as default in external config
 		currentVal, found := l.config.Get(path)
 		if !found {
-			// Use the original default if not found in current config
-			currentVal = configDefaults[path]
+			continue // Skip if not found (shouldn't happen)
 		}
 
-		// Register in external config with our current value as the default
+		// Register in external config with current value as default
 		err := extCfg.Register(fullPath, currentVal)
 		if err != nil {
 			return fmtErrorf("failed to register config key '%s': %w", fullPath, err)
@@ -138,14 +117,12 @@ func (l *Logger) updateConfigFromExternal(extCfg *config.Config, basePath string
 			continue // Use existing value if not found in external config
 		}
 
-		// Validate the value before updating
+		// Validate and update
 		if err := validateConfigValue(localName, val); err != nil {
 			return fmtErrorf("invalid value for '%s': %w", localName, err)
 		}
 
-		// Update our config with the new value
-		err = l.config.Set(path, val)
-		if err != nil {
+		if err := l.config.Set(path, val); err != nil {
 			return fmtErrorf("failed to update config value for '%s': %w", path, err)
 		}
 	}
@@ -275,75 +252,6 @@ func (l *Logger) loadCurrentConfig() *Config {
 func (l *Logger) getCurrentLogChannel() chan logRecord {
 	chVal := l.state.ActiveLogChannel.Load()
 	return chVal.(chan logRecord)
-}
-
-// Logger instance methods for logging at different levels
-
-// Debug logs a message at debug level.
-func (l *Logger) Debug(args ...any) {
-	flags := l.getFlags()
-	traceDepth, _ := l.config.Int64("log.trace_depth")
-	l.log(flags, LevelDebug, traceDepth, args...)
-}
-
-// Info logs a message at info level.
-func (l *Logger) Info(args ...any) {
-	flags := l.getFlags()
-	traceDepth, _ := l.config.Int64("log.trace_depth")
-	l.log(flags, LevelInfo, traceDepth, args...)
-}
-
-// Warn logs a message at warning level.
-func (l *Logger) Warn(args ...any) {
-	flags := l.getFlags()
-	traceDepth, _ := l.config.Int64("log.trace_depth")
-	l.log(flags, LevelWarn, traceDepth, args...)
-}
-
-// Error logs a message at error level.
-func (l *Logger) Error(args ...any) {
-	flags := l.getFlags()
-	traceDepth, _ := l.config.Int64("log.trace_depth")
-	l.log(flags, LevelError, traceDepth, args...)
-}
-
-// DebugTrace logs a debug message with function call trace.
-func (l *Logger) DebugTrace(depth int, args ...any) {
-	flags := l.getFlags()
-	l.log(flags, LevelDebug, int64(depth), args...)
-}
-
-// InfoTrace logs an info message with function call trace.
-func (l *Logger) InfoTrace(depth int, args ...any) {
-	flags := l.getFlags()
-	l.log(flags, LevelInfo, int64(depth), args...)
-}
-
-// WarnTrace logs a warning message with function call trace.
-func (l *Logger) WarnTrace(depth int, args ...any) {
-	flags := l.getFlags()
-	l.log(flags, LevelWarn, int64(depth), args...)
-}
-
-// ErrorTrace logs an error message with function call trace.
-func (l *Logger) ErrorTrace(depth int, args ...any) {
-	flags := l.getFlags()
-	l.log(flags, LevelError, int64(depth), args...)
-}
-
-// Log writes a timestamp-only record without level information.
-func (l *Logger) Log(args ...any) {
-	l.log(FlagShowTimestamp, LevelInfo, 0, args...)
-}
-
-// Message writes a plain record without timestamp or level info.
-func (l *Logger) Message(args ...any) {
-	l.log(0, LevelInfo, 0, args...)
-}
-
-// LogTrace writes a timestamp record with call trace but no level info.
-func (l *Logger) LogTrace(depth int, args ...any) {
-	l.log(FlagShowTimestamp, LevelInfo, int64(depth), args...)
 }
 
 // Helper method to get flags from config

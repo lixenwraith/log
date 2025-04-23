@@ -58,16 +58,17 @@ func main() {
 	}
 
 	// --- Initialize Logger ---
+	logger := log.NewLogger()
 	// Pass the config instance and the base path for logger settings
-	err = log.Init(cfg, configBasePath)
+	err = logger.Init(cfg, configBasePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to initialize logger.er: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Println("Logger initialized.")
 
 	// --- SAVE CONFIGURATION ---
-	// Save the config state *after* log.Init has registered its keys/defaults
+	// Save the config state *after* logger.Init has registered its keys/defaults
 	// This will write the merged configuration (defaults + file overrides) back.
 	err = cfg.Save(configFile)
 	if err != nil {
@@ -78,10 +79,10 @@ func main() {
 	// --- End Save Configuration ---
 
 	// --- Logging ---
-	log.Debug("This is a debug message.", "user_id", 123)
-	log.Info("Application starting...")
-	log.Warn("Potential issue detected.", "threshold", 0.95)
-	log.Error("An error occurred!", "code", 500)
+	logger.Debug("This is a debug message.", "user_id", 123)
+	logger.Info("Application starting...")
+	logger.Warn("Potential issue detected.", "threshold", 0.95)
+	logger.Error("An error occurred!", "code", 500)
 
 	// Logging from goroutines
 	var wg sync.WaitGroup
@@ -89,21 +90,21 @@ func main() {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			log.Info("Goroutine started", "id", id)
+			logger.Info("Goroutine started", "id", id)
 			time.Sleep(time.Duration(50+id*50) * time.Millisecond)
-			log.InfoTrace(1, "Goroutine finished", "id", id) // Log with trace
+			logger.InfoTrace(1, "Goroutine finished", "id", id) // Log with trace
 		}(i)
 	}
 
-	// Wait for goroutines to finish before shutting down logger
+	// Wait for goroutines to finish before shutting down logger.er
 	wg.Wait()
 	fmt.Println("Goroutines finished.")
 
 	// --- Shutdown Logger ---
-	fmt.Println("Shutting down logger...")
-	// Provide a reasonable timeout for logs to flush
+	fmt.Println("Shutting down logger.er...")
+	// Provide a reasonable timeout for logger. to flush
 	shutdownTimeout := 2 * time.Second
-	err = log.Shutdown(shutdownTimeout)
+	err = logger.Shutdown(shutdownTimeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Logger shutdown error: %v\n", err)
 	} else {

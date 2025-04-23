@@ -38,45 +38,44 @@ type Config struct {
 	MaxCheckIntervalMs     int64 `toml:"max_check_interval_ms"`    // Maximum adaptive interval
 }
 
-// DefaultConfig returns a LogConfig with sensible defaults.
-// These defaults are primarily used if config registration or loading fails,
-// or before the first configuration is applied. The primary default mechanism
-// is config.Register.
-func DefaultConfig() *Config {
-	return &Config{
-		Level:                  LevelInfo,
-		Name:                   "log",
-		Directory:              "./logs",
-		Format:                 "txt",
-		Extension:              "log",
-		ShowTimestamp:          true,
-		ShowLevel:              true,
-		BufferSize:             1024,
-		MaxSizeMB:              10,
-		MaxTotalSizeMB:         50,
-		MinDiskFreeMB:          100,
-		FlushIntervalMs:        100,
-		TraceDepth:             0,
-		RetentionPeriodHrs:     0.0,
-		RetentionCheckMins:     60.0,
-		DiskCheckIntervalMs:    5000,
-		EnableAdaptiveInterval: true,
-		EnablePeriodicSync:     false,
-		MinCheckIntervalMs:     100,
-		MaxCheckIntervalMs:     60000,
-	}
+// defaultConfig is the single source of truth for all default values
+var defaultConfig = Config{
+	// Basic settings
+	Level:     LevelInfo,
+	Name:      "log",
+	Directory: "./logs",
+	Format:    "txt",
+	Extension: "log",
+
+	// Formatting
+	ShowTimestamp: true,
+	ShowLevel:     true,
+
+	// Buffer and size limits
+	BufferSize:     1024,
+	MaxSizeMB:      10,
+	MaxTotalSizeMB: 50,
+	MinDiskFreeMB:  100,
+
+	// Timers
+	FlushIntervalMs:    100,
+	TraceDepth:         0,
+	RetentionPeriodHrs: 0.0,
+	RetentionCheckMins: 60.0,
+
+	// Disk check settings
+	DiskCheckIntervalMs:    5000,
+	EnableAdaptiveInterval: true,
+	EnablePeriodicSync:     false,
+	MinCheckIntervalMs:     100,
+	MaxCheckIntervalMs:     60000,
 }
 
-// Clone creates a deep copy of the Config.
-// Used internally to avoid modifying the shared config object directly.
-func (c *Config) Clone() *Config {
-	if c == nil {
-		// Should ideally not happen if Load() returns default, but defensive copy
-		return DefaultConfig()
-	}
-	// Create a shallow copy, which is sufficient as all fields are basic types
-	clone := *c
-	return &clone
+// DefaultConfig returns a copy of the default configuration
+func DefaultConfig() *Config {
+	// Create a copy to prevent modifications to the original
+	config := defaultConfig
+	return &config
 }
 
 // validate performs basic sanity checks on the configuration values.
