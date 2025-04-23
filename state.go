@@ -31,6 +31,13 @@ type State struct {
 	LoggedDrops      atomic.Uint64 // Counter for dropped logs message already logged
 
 	ActiveLogChannel atomic.Value // stores chan logRecord
+
+	// Heartbeat statistics
+	HeartbeatSequence  atomic.Uint64 // Counter for heartbeat sequence numbers
+	LoggerStartTime    atomic.Value  // Stores time.Time for uptime calculation
+	TotalLogsProcessed atomic.Uint64 // Counter for non-heartbeat logs successfully processed
+	TotalRotations     atomic.Uint64 // Counter for successful log rotations
+	TotalDeletions     atomic.Uint64 // Counter for successful log deletions (cleanup/retention)
 }
 
 // Init initializes or reconfigures the logger using the provided config.Config instance
@@ -124,7 +131,9 @@ func (l *Logger) InitWithDefaults(overrides ...string) error {
 }
 
 // Shutdown gracefully closes the logger, attempting to flush pending records
-func (l *Logger) Shutdown(timeout time.Duration) error {
+// If no timeout is provided, uses a default of 2x flush interval
+func (l *Logger) Shutdown(timeout ...time.Duration) error {
+
 	// Ensure shutdown runs only once
 	if !l.state.ShutdownCalled.CompareAndSwap(false, true) {
 		return nil
@@ -153,10 +162,12 @@ func (l *Logger) Shutdown(timeout time.Duration) error {
 	}
 	l.initMu.Unlock()
 
-	// Determine the maximum time to wait for the processor to finish
-	effectiveTimeout := timeout
-	if effectiveTimeout <= 0 {
-		// Use the configured flush interval as the default timeout if none provided
+	// Determine the effective timeout, if timeout is zero or negative, use a default based on flush interval
+	var effectiveTimeout time.Duration
+	if len(timeout) > 0 {
+		effectiveTimeout = timeout[0]
+	} else {
+		// Default to 2x flush interval
 		flushMs, _ := l.config.Int64("log.flush_interval_ms")
 		effectiveTimeout = 2 * time.Duration(flushMs) * time.Millisecond
 	}

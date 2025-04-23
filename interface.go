@@ -13,6 +13,13 @@ const (
 	LevelError int64 = 8
 )
 
+// Heartbeat log levels
+const (
+	LevelProc int64 = 12 // Process/Logger Stats
+	LevelDisk int64 = 16 // Disk/File Stats
+	LevelSys  int64 = 20 // System/Runtime Stats
+)
+
 // Record flags for controlling output structure
 const (
 	FlagShowTimestamp int64 = 0b01

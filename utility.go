@@ -153,7 +153,13 @@ func Level(levelStr string) (int64, error) {
 		return LevelWarn, nil
 	case "error":
 		return LevelError, nil
+	case "proc":
+		return LevelProc, nil
+	case "disk":
+		return LevelDisk, nil
+	case "sys":
+		return LevelSys, nil
 	default:
-		return 0, fmtErrorf("invalid level string: '%s' (use debug, info, warn, error)", levelStr)
+		return 0, fmtErrorf("invalid level string: '%s' (use debug, info, warn, error, proc, disk, sys)", levelStr)
 	}
 }

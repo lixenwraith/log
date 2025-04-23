@@ -13,10 +13,10 @@ import (
 
 // Logger is the core struct that encapsulates all logger functionality
 type Logger struct {
-	config     *config.Config // Config management
+	config     *config.Config
 	state      State
-	initMu     sync.Mutex  // Only mutex we need to keep
-	serializer *serializer // Encapsulated serializer instance
+	initMu     sync.Mutex
+	serializer *serializer
 }
 
 // NewLogger creates a new Logger instance with default settings
@@ -38,6 +38,13 @@ func NewLogger() *Logger {
 	l.state.ProcessorExited.Store(true)
 	l.state.CurrentSize.Store(0)
 	l.state.EarliestFileTime.Store(time.Time{})
+
+	// Initialize heartbeat counters
+	l.state.HeartbeatSequence.Store(0)
+	l.state.LoggerStartTime.Store(time.Now())
+	l.state.TotalLogsProcessed.Store(0)
+	l.state.TotalRotations.Store(0)
+	l.state.TotalDeletions.Store(0)
 
 	// Create a closed channel initially to prevent nil pointer issues
 	initialChan := make(chan logRecord)
@@ -245,6 +252,8 @@ func (l *Logger) loadCurrentConfig() *Config {
 	cfg.MinCheckIntervalMs, _ = l.config.Int64("log.min_check_interval_ms")
 	cfg.MaxCheckIntervalMs, _ = l.config.Int64("log.max_check_interval_ms")
 	cfg.EnablePeriodicSync, _ = l.config.Bool("log.enable_periodic_sync")
+	cfg.HeartbeatLevel, _ = l.config.Int64("log.heartbeat_level")
+	cfg.HeartbeatIntervalS, _ = l.config.Int64("log.heartbeat_interval_s")
 	return cfg
 }
 

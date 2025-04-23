@@ -31,7 +31,7 @@ var tomlContent = `
 [logstress]
   level = -4 # Debug
   name = "stress_test"
-  directory = "./stress_logs" # Log package will create this
+  directory = "./logs" # Log package will create this
   format = "txt"
   extension = "log"
   show_timestamp = true
@@ -115,8 +115,8 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("Created dummy config file: %s\n", configFile)
-	logsDir := "./stress_logs" // Match config
-	_ = os.RemoveAll(logsDir)  // Clean previous run's LOGS directory before starting
+	logsDir := "./logs"       // Match config
+	_ = os.RemoveAll(logsDir) // Clean previous run's LOGS directory before starting
 	// defer os.Remove(configFile) // Remove to keep the saved config file
 	// defer os.RemoveAll(logsDir) // Remove to keep the log directory
 

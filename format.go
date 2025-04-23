@@ -232,7 +232,7 @@ func (s *serializer) writeJSONValue(v any) {
 	}
 }
 
-// levelToString converts numeric levels to string representation.
+// Update the levelToString function to include the new heartbeat levels
 func levelToString(level int64) string {
 	switch level {
 	case LevelDebug:
@@ -243,6 +243,12 @@ func levelToString(level int64) string {
 		return "WARN"
 	case LevelError:
 		return "ERROR"
+	case LevelProc:
+		return "PROC"
+	case LevelDisk:
+		return "DISK"
+	case LevelSys:
+		return "SYS"
 	default:
 		return fmt.Sprintf("LEVEL(%d)", level)
 	}

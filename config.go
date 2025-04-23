@@ -36,6 +36,10 @@ type Config struct {
 	EnablePeriodicSync     bool  `toml:"enable_periodic_sync"`     // Periodic sync with disk
 	MinCheckIntervalMs     int64 `toml:"min_check_interval_ms"`    // Minimum adaptive interval
 	MaxCheckIntervalMs     int64 `toml:"max_check_interval_ms"`    // Maximum adaptive interval
+
+	// Heartbeat configuration
+	HeartbeatLevel     int64 `toml:"heartbeat_level"`      // 0=disabled, 1=proc only, 2=proc+disk, 3=proc+disk+sys
+	HeartbeatIntervalS int64 `toml:"heartbeat_interval_s"` // Interval seconds for heartbeat
 }
 
 // defaultConfig is the single source of truth for all default values
@@ -66,9 +70,13 @@ var defaultConfig = Config{
 	// Disk check settings
 	DiskCheckIntervalMs:    5000,
 	EnableAdaptiveInterval: true,
-	EnablePeriodicSync:     false,
+	EnablePeriodicSync:     true,
 	MinCheckIntervalMs:     100,
 	MaxCheckIntervalMs:     60000,
+
+	// Heartbeat settings
+	HeartbeatLevel:     0,  // Disabled by default
+	HeartbeatIntervalS: 60, // Default to 60 seconds if enabled
 }
 
 // DefaultConfig returns a copy of the default configuration
@@ -123,7 +131,13 @@ func (c *Config) validate() error {
 		return fmtErrorf("retention_period_hrs cannot be negative: %f", c.RetentionPeriodHrs)
 	}
 	if c.RetentionCheckMins < 0 {
-		// Allow 0 check interval (disables periodic check but not initial)
+		return fmtErrorf("retention_check_mins cannot be negative: %f", c.RetentionCheckMins)
+	}
+	if c.HeartbeatLevel < 0 || c.HeartbeatLevel > 3 {
+		return fmtErrorf("heartbeat_level must be between 0 and 3: %d", c.HeartbeatLevel)
+	}
+	if c.HeartbeatLevel > 0 && c.HeartbeatIntervalS <= 0 {
+		return fmtErrorf("heartbeat_interval_s must be positive when heartbeat is enabled: %d", c.HeartbeatIntervalS)
 	}
 	return nil
 }

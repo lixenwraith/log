@@ -18,7 +18,7 @@ var tomlContent = `
 # Example simple_config.toml
 [logging]
   level = -4 # Debug
-  directory = "./simple_logs"
+  directory = "./logs"
   format = "txt"
   extension = "log"
   show_timestamp = true
@@ -113,5 +113,5 @@ func main() {
 
 	// NO time.Sleep needed here - log.Shutdown waits.
 	fmt.Println("--- Example Finished ---")
-	fmt.Printf("Check log files in './simple_logs' and the saved config '%s'.\n", configFile)
+	fmt.Printf("Check log files in './logs' and the saved config '%s'.\n", configFile)
 }
