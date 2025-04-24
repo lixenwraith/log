@@ -15,9 +15,9 @@ const (
 
 // Heartbeat log levels
 const (
-	LevelProc int64 = 12 // Process/Logger Stats
-	LevelDisk int64 = 16 // Disk/File Stats
-	LevelSys  int64 = 20 // System/Runtime Stats
+	LevelProc int64 = 12
+	LevelDisk int64 = 16
+	LevelSys  int64 = 20
 )
 
 // Record flags for controlling output structure
@@ -36,7 +36,7 @@ type logRecord struct {
 	Args      []any
 }
 
-// Logger instance methods for logging at different levels
+// Logger instance methods for configuration and logging at different levels.
 
 // Debug logs a message at debug level.
 func (l *Logger) Debug(args ...any) {

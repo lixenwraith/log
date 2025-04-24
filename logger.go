@@ -263,7 +263,7 @@ func (l *Logger) getCurrentLogChannel() chan logRecord {
 	return chVal.(chan logRecord)
 }
 
-// Helper method to get flags from config
+// getFlags from config
 func (l *Logger) getFlags() int64 {
 	var flags int64 = 0
 	showLevel, _ := l.config.Bool("log.show_level")
@@ -280,40 +280,36 @@ func (l *Logger) getFlags() int64 {
 
 // log handles the core logging logic
 func (l *Logger) log(flags int64, level int64, depth int64, args ...any) {
-	// Quick checks first
 	if l.state.LoggerDisabled.Load() || !l.state.IsInitialized.Load() {
 		return
 	}
 
-	// Check if this log level should be processed
 	configLevel, _ := l.config.Int64("log.level")
 	if level < configLevel {
 		return
 	}
 
-	// Report dropped logs if necessary
+	// Report dropped logs first if there has been any
 	currentDrops := l.state.DroppedLogs.Load()
 	logged := l.state.LoggedDrops.Load()
 	if currentDrops > logged {
 		if l.state.LoggedDrops.CompareAndSwap(logged, currentDrops) {
 			dropRecord := logRecord{
-				Flags:     FlagDefault, // Use default flags for drop message
+				Flags:     FlagDefault,
 				TimeStamp: time.Now(),
 				Level:     LevelError,
 				Args:      []any{"Logs were dropped", "dropped_count", currentDrops - logged, "total_dropped", currentDrops},
 			}
-			l.sendLogRecord(dropRecord) // Best effort send
+			l.sendLogRecord(dropRecord)
 		}
 	}
 
-	// Get trace if needed
 	var trace string
 	if depth > 0 {
 		const skipTrace = 3 // log.Info -> log -> getTrace (Adjust if call stack changes)
 		trace = getTrace(depth, skipTrace)
 	}
 
-	// Create record and send
 	record := logRecord{
 		Flags:     flags,
 		TimeStamp: time.Now(),
@@ -337,7 +333,6 @@ func (l *Logger) sendLogRecord(record logRecord) {
 		return
 	}
 
-	// Load current channel reference atomically
 	ch := l.getCurrentLogChannel()
 
 	// Non-blocking send

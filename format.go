@@ -16,7 +16,7 @@ type serializer struct {
 // newSerializer creates a serializer instance.
 func newSerializer() *serializer {
 	return &serializer{
-		buf: make([]byte, 0, 1024), // Initial capacity
+		buf: make([]byte, 0, 4096), // Initial reasonable capacity
 	}
 }
 
@@ -25,23 +25,21 @@ func (s *serializer) reset() {
 	s.buf = s.buf[:0]
 }
 
-// serialize converts log entries to the configured format (JSON or text).
+// serialize converts log entries to the configured format, JSON or (default) text.
 func (s *serializer) serialize(format string, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
 	s.reset()
 
 	if format == "json" {
 		return s.serializeJSON(flags, timestamp, level, trace, args)
 	}
-	// Default to text format
 	return s.serializeText(flags, timestamp, level, trace, args)
 }
 
-// serializeJSON formats log entries as JSON.
+// serializeJSON formats log entries as JSON (time, level, trace, fields).
 func (s *serializer) serializeJSON(flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
 	s.buf = append(s.buf, '{')
 	needsComma := false
 
-	// Time
 	if flags&FlagShowTimestamp != 0 {
 		s.buf = append(s.buf, `"time":"`...)
 		s.buf = timestamp.AppendFormat(s.buf, time.RFC3339Nano)
@@ -49,7 +47,6 @@ func (s *serializer) serializeJSON(flags int64, timestamp time.Time, level int64
 		needsComma = true
 	}
 
-	// Level
 	if flags&FlagShowLevel != 0 {
 		if needsComma {
 			s.buf = append(s.buf, ',')
@@ -60,7 +57,6 @@ func (s *serializer) serializeJSON(flags int64, timestamp time.Time, level int64
 		needsComma = true
 	}
 
-	// Trace
 	if trace != "" {
 		if needsComma {
 			s.buf = append(s.buf, ',')
@@ -71,7 +67,6 @@ func (s *serializer) serializeJSON(flags int64, timestamp time.Time, level int64
 		needsComma = true
 	}
 
-	// Fields (Args)
 	if len(args) > 0 {
 		if needsComma {
 			s.buf = append(s.buf, ',')
@@ -90,17 +85,15 @@ func (s *serializer) serializeJSON(flags int64, timestamp time.Time, level int64
 	return s.buf
 }
 
-// serializeText formats log entries as plain text.
+// serializeText formats log entries as plain text (time, level, trace, fields).
 func (s *serializer) serializeText(flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
 	needsSpace := false
 
-	// Time
 	if flags&FlagShowTimestamp != 0 {
 		s.buf = timestamp.AppendFormat(s.buf, time.RFC3339Nano)
 		needsSpace = true
 	}
 
-	// Level
 	if flags&FlagShowLevel != 0 {
 		if needsSpace {
 			s.buf = append(s.buf, ' ')
@@ -109,7 +102,6 @@ func (s *serializer) serializeText(flags int64, timestamp time.Time, level int64
 		needsSpace = true
 	}
 
-	// Trace
 	if trace != "" {
 		if needsSpace {
 			s.buf = append(s.buf, ' ')
@@ -118,7 +110,6 @@ func (s *serializer) serializeText(flags int64, timestamp time.Time, level int64
 		needsSpace = true
 	}
 
-	// Fields (Args)
 	for _, arg := range args {
 		if needsSpace {
 			s.buf = append(s.buf, ' ')

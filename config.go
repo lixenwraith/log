@@ -75,8 +75,8 @@ var defaultConfig = Config{
 	MaxCheckIntervalMs:     60000,
 
 	// Heartbeat settings
-	HeartbeatLevel:     0,  // Disabled by default
-	HeartbeatIntervalS: 60, // Default to 60 seconds if enabled
+	HeartbeatLevel:     0,
+	HeartbeatIntervalS: 60,
 }
 
 // DefaultConfig returns a copy of the default configuration

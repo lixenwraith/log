@@ -341,7 +341,6 @@ func (l *Logger) createNewLogFile() (*os.File, error) {
 	filename := l.generateLogFileName(time.Now())
 	fullPath := filepath.Join(dir, filename)
 
-	// Retry logic for potential collisions (rare)
 	for i := 0; i < 5; i++ {
 		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 			break
@@ -366,7 +365,7 @@ func (l *Logger) rotateLogFile() error {
 	}
 
 	oldFilePtr := l.state.CurrentFile.Swap(newFile)
-	l.state.CurrentSize.Store(0) // Reset size for the new file
+	l.state.CurrentSize.Store(0)
 
 	if oldFilePtr != nil {
 		if oldFile, ok := oldFilePtr.(*os.File); ok && oldFile != nil {

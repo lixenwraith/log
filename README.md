@@ -20,10 +20,10 @@ using atomic operations and channels.
 - **Automatic File Rotation:** Seamlessly rotates log files when they reach configurable size limits (`max_size_mb`),
   generating timestamped filenames.
 - **Comprehensive Disk Management:**
-    - Monitors total log directory size against configured limits (`max_total_size_mb`)
-    - Enforces minimum free disk space requirements (`min_disk_free_mb`)
-    - Automatically prunes oldest log files to maintain space constraints
-    - Implements recovery behavior when disk space is exhausted
+  - Monitors total log directory size against configured limits (`max_total_size_mb`)
+  - Enforces minimum free disk space requirements (`min_disk_free_mb`)
+  - Automatically prunes oldest log files to maintain space constraints
+  - Implements recovery behavior when disk space is exhausted
 - **Adaptive Resource Monitoring:** Dynamically adjusts disk check frequency based on logging volume (
   `enable_adaptive_interval`, `min_check_interval_ms`, `max_check_interval_ms`), optimizing performance under varying
   loads.
@@ -48,8 +48,7 @@ using atomic operations and channels.
 
 ```bash
 go get github.com/LixenWraith/log
-# If using full TOML/CLI config:
-# go get github.com/LixenWraith/config
+go get github.com/LixenWraith/config
 ```
 
 ## Basic Usage
@@ -73,9 +72,53 @@ func main() {
 
 ## Configuration
 
-The `log` package is configured via keys registered with the `config.Config` instance passed to `(l *Logger) Init`, or
-via string overrides passed to `(l *Logger) InitWithDefaults`. `Init` expects these keys relative to the `basePath`
-argument.
+The `log` package can be configured in two ways:
+
+1. Using a `config.Config` instance with the `Init` method
+2. Using simple string overrides with the `InitWithDefaults` method
+
+### Configuration via Init
+
+When using `(l *Logger) Init(cfg *config.Config, basePath string)`, the `basePath` argument defines the prefix for all configuration keys in the `config.Config` instance. For example, if `basePath` is set to `"logging"`, the logger will look for configuration keys like `"logging.level"`, `"logging.name"`, etc. This allows embedding logger configuration within a larger application configuration.
+
+```go
+// Initialize config
+cfg := config.New()
+configExists, err := cfg.Load("app_config.toml", os.Args[1:])
+if err != nil {
+    // Handle error
+}
+
+// Initialize logger with config and path prefix
+logger := log.NewLogger()
+err = logger.Init(cfg, "logging") // Look for keys under "logging."
+if err != nil {
+    // Handle error
+}
+```
+
+Example TOML with `basePath = "logging"`:
+```toml
+[logging]  # This matches the basePath
+level = -4 # Debug
+directory = "/var/log/my_service"
+format = "json"
+```
+
+### Configuration via InitWithDefaults
+
+When using `(l *Logger) InitWithDefaults(overrides ...string)`, the configuration keys are provided directly without a prefix, e.g., `"level=-4"`, `"directory=/var/log/my_service"`.
+
+```go
+// Simple initialization with specific overrides
+logger := log.NewLogger()
+err := logger.InitWithDefaults("directory=/var/log/app", "level=-4")
+if err != nil {
+    // Handle error
+}
+```
+
+### Configuration Parameters
 
 | Key (`basePath` + Key)     | Type      | Description                                                               | Default Value |
 |:---------------------------|:----------|:--------------------------------------------------------------------------|:--------------|
@@ -101,20 +144,6 @@ argument.
 | `max_check_interval_ms`    | `int64`   | Maximum interval (ms) for adaptive disk checks                            | `60000`       |
 | `heartbeat_level`          | `int64`   | Heartbeat detail level (0=disabled, 1=proc, 2=proc+disk, 3=proc+disk+sys) | `0`           |
 | `heartbeat_interval_s`     | `int64`   | Interval (s) between heartbeat messages                                   | `60`          |
-
-**Example TOML Configuration** (Used with `(l *Logger) Init` and the `config` package)
-
-# Assuming basePath = "logging" passed to Init
-
-```toml
-[logging]
-level = -4 # Debug
-directory = "/var/log/my_service"
-format = "json"
-max_size_mb = 100
-retention_period_hrs = 168.0 # 7 days
-heartbeat_level = 2 # Process + disk statistics
-```
 
 ## API Reference
 
@@ -191,30 +220,30 @@ Called on an initialized `*Logger` instance.
   goroutine per logger instance, preventing contention and serializing file I/O operations.
 
 - **Adaptive Resource Management:**
-    - Disk checks run periodically via timer and reactively when write volume thresholds are crossed.
-    - Check frequency automatically adjusts based on logging rate when `enable_adaptive_interval` is enabled.
+  - Disk checks run periodically via timer and reactively when write volume thresholds are crossed.
+  - Check frequency automatically adjusts based on logging rate when `enable_adaptive_interval` is enabled.
 
 - **Heartbeat Messages:**
-    - Periodic operational statistics that bypass log level filtering.
-    - Three levels of detail (`heartbeat_level`):
-        - Level 1 (PROC): Logger metrics (uptime, processed/dropped logs)
-        - Level 2 (DISK): Adds disk metrics (rotations, deletions, file counts, sizes)
-        - Level 3 (SYS): Adds system metrics (memory usage, goroutine count, GC stats)
-    - Ensures monitoring data is available regardless of the configured `level`.
+  - Periodic operational statistics that bypass log level filtering.
+  - Three levels of detail (`heartbeat_level`):
+    - Level 1 (PROC): Logger metrics (uptime, processed/dropped logs)
+    - Level 2 (DISK): Adds disk metrics (rotations, deletions, file counts, sizes)
+    - Level 3 (SYS): Adds system metrics (memory usage, goroutine count, GC stats)
+  - Ensures monitoring data is available regardless of the configured `level`.
 
 - **File Management:**
-    - Log files are rotated when `max_size_mb` is exceeded.
-    - Oldest files are automatically pruned when space limits (`max_total_size_mb`, `min_disk_free_mb`) are approached.
-    - Files older than `retention_period_hrs` are periodically removed.
+  - Log files are rotated when `max_size_mb` is exceeded.
+  - Oldest files are automatically pruned when space limits (`max_total_size_mb`, `min_disk_free_mb`) are approached.
+  - Files older than `retention_period_hrs` are periodically removed.
 
 - **Recovery Behavior:** When disk issues occur, the logger temporarily pauses new logs and attempts recovery on
   subsequent operations, logging one disk warning message to prevent error spam.
 
 - **Graceful Shutdown Flow:**
-    1. Sets atomic flags to prevent new logs on the specific instance.
-    2. Closes the active log channel to signal processor shutdown for that instance.
-    3. Waits briefly for the processor to finish pending records.
-    4. Performs final sync and closes the file handle.
+  1. Sets atomic flags to prevent new logs on the specific instance.
+  2. Closes the active log channel to signal processor shutdown for that instance.
+  3. Waits briefly for the processor to finish pending records.
+  4. Performs final sync and closes the file handle.
 
 ## Performance Considerations
 
@@ -230,19 +259,35 @@ Called on an initialized `*Logger` instance.
 - **Concurrent Safety:** Thread-safe through careful use of atomic operations and channel-based processing, minimizing
   mutex usage to initialization and shutdown paths only. Multiple `*Logger` instances operate independently.
 
+## Heartbeat Usage Example
+
+Heartbeats provide periodic operational statistics even when using higher log levels:
+
+```go
+// Enable all heartbeat types with 30-second interval
+logger := log.NewLogger()
+err := logger.InitWithDefaults(
+    "level=4",                // Only show Warn and above for normal logs
+    "heartbeat_level=3",      // Enable all heartbeat types 
+    "heartbeat_interval_s=30" // 30-second interval
+)
+
+// The PROC, DISK, and SYS heartbeat messages will appear every 30 seconds
+// even though regular Debug and Info logs are filtered out
+```
+
 ## Caveats & Limitations
 
 - **Log Loss Scenarios:**
-    - **Buffer Saturation:** Under extreme load, logs may be dropped if the internal buffer fills faster than records
-      can be processed by the background goroutine. A summary message will be logged once capacity is available again.
-    - **Shutdown Race:** The `Shutdown` function provides a best-effort attempt to process remaining logs, but cannot
-      guarantee all buffered logs will be written if the application terminates abruptly or the timeout is too short.
-    - **Persistent Disk Issues:** If disk space cannot be reclaimed through cleanup, logs will be dropped until the
-      condition is resolved.
+  - **Buffer Saturation:** Under extreme load, logs may be dropped if the internal buffer fills faster than records
+    can be processed by the background goroutine. A summary message will be logged once capacity is available again.
+  - **Shutdown Race:** The `Shutdown` function provides a best-effort attempt to process remaining logs, but cannot
+    guarantee all buffered logs will be written if the application terminates abruptly or the timeout is too short.
+  - **Persistent Disk Issues:** If disk space cannot be reclaimed through cleanup, logs will be dropped until the
+    condition is resolved.
 
-- **Configuration Dependencies:** Requires the `github.com/LixenWraith/config` package for advanced configuration
-  management via TOML/CLI using the `Init` method. `InitWithDefaults` provides simpler initialization without this
-  dependency.
+- **Configuration Dependencies:**
+  For full configuration management (TOML file loading, CLI overrides, etc.), the `github.com/LixenWraith/config` package is required when using the `Init` method. For simpler initialization without this external dependency, use `InitWithDefaults`.
 
 - **Retention Accuracy:** Log retention relies on file modification times, which could potentially be affected by
   external file system operations.
