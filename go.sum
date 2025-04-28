@@ -1,6 +1,6 @@
-github.com/LixenWraith/config v0.0.0-20250423082047-b106c94c2c8b h1:IYhbozsDOhT1fiogABpomRq9IEonNmQs54ROPn3Xy4g=
-github.com/LixenWraith/config v0.0.0-20250423082047-b106c94c2c8b/go.mod h1:LWz2FXeYAN1IxmPFAmbMZLhL/5LbHzJgnj4m7l5jGvc=
-github.com/LixenWraith/tinytoml v0.0.0-20250422065624-8aa28720f04a h1:m+lhpIexwlJa5m1QuEveRmaGIE+wp87T97PyX1IWbMw=
-github.com/LixenWraith/tinytoml v0.0.0-20250422065624-8aa28720f04a/go.mod h1:Vax79K0I//Klsa8POjua/XHbsMUiIdjJHr59VFbc0/8=
+github.com/BurntSushi/toml v1.5.0 h1:W5quZX/G/csjUnuI8SUYlsHs9M38FC7znL0lIO+DvMg=
+github.com/BurntSushi/toml v1.5.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
+github.com/LixenWraith/config v0.0.0-20250426061518-532233ac282c h1:3JcYZVGF+OOfm72eOE2LLFHU9ERYSKs76jJOxpB/4FQ=
+github.com/LixenWraith/config v0.0.0-20250426061518-532233ac282c/go.mod h1:3cBfqRthYrMGIkea2GXyMVPNxVWSYt2FkeWG1Zyv2Ow=
 github.com/mitchellh/mapstructure v1.5.0 h1:jeMsZIYE/09sWLaz43PL7Gy6RuMjD2eJVyuac5Z2hdY=
 github.com/mitchellh/mapstructure v1.5.0/go.mod h1:bFUtVrKA4DC2yAKiSyO/QUcy7e+RRV2QTWOzhPopBRo=

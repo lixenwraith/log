@@ -2,6 +2,7 @@
 package log
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -58,8 +59,13 @@ func NewLogger() *Logger {
 
 // LoadConfig loads logger configuration from a file with optional CLI overrides
 func (l *Logger) LoadConfig(path string, args []string) error {
-	configExists, err := l.config.Load(path, args)
-	if err != nil {
+	err := l.config.Load(path, args)
+
+	// Check if the error indicates that the file was not found
+	configExists := !errors.Is(err, config.ErrConfigNotFound)
+
+	// If there's an error other than "file not found", return it
+	if err != nil && !errors.Is(err, config.ErrConfigNotFound) {
 		return err
 	}
 

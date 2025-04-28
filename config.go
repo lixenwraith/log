@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// Config holds all logger configuration values, populated via config.UnmarshalSubtree
+// Config holds all logger configuration values
 type Config struct {
 	// Basic settings
 	Level     int64  `toml:"level"`
@@ -42,7 +42,7 @@ type Config struct {
 	HeartbeatIntervalS int64 `toml:"heartbeat_interval_s"` // Interval seconds for heartbeat
 }
 
-// defaultConfig is the single source of truth for all default values
+// defaultConfig is the single source for all configurable default values
 var defaultConfig = Config{
 	// Basic settings
 	Level:     LevelInfo,
