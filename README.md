@@ -1,7 +1,7 @@
 # Log
 
 A high-performance, buffered, rotating file logger for Go applications, configured via
-the [LixenWraith/config](https://github.com/LixenWraith/config) package or simple overrides. Designed for
+the [lixenwraith/config](https://github.com/lixenwraith/config) package or simple overrides. Designed for
 production-grade reliability with features like disk management, log retention, and lock-free asynchronous processing
 using atomic operations and channels.
 
@@ -14,7 +14,7 @@ using atomic operations and channels.
 - **Lock-free Asynchronous Logging:** Non-blocking log operations with minimal application impact. Logs are sent via a
   buffered channel, processed by a dedicated background goroutine. Uses atomic operations for state management, avoiding
   mutexes in the hot path.
-- **External Configuration:** Fully configured using `github.com/LixenWraith/config`, supporting both TOML files and CLI
+- **External Configuration:** Fully configured using `github.com/lixenwraith/config`, supporting both TOML files and CLI
   overrides with centralized management. Also supports simple initialization with defaults and string overrides via
   `InitWithDefaults`.
 - **Automatic File Rotation:** Seamlessly rotates log files when they reach configurable size limits (`max_size_mb`),
@@ -47,8 +47,8 @@ using atomic operations and channels.
 ## Installation
 
 ```bash
-go get github.com/LixenWraith/log
-go get github.com/LixenWraith/config
+go get github.com/lixenwraith/log
+go get github.com/lixenwraith/config
 ```
 
 ## Basic Usage
@@ -59,7 +59,7 @@ This example shows minimal initialization using defaults with a single override,
 package main
 
 import (
-    "github.com/LixenWraith/log"
+    "github.com/lixenwraith/log"
 )
 
 func main() {
@@ -287,7 +287,7 @@ err := logger.InitWithDefaults(
     condition is resolved.
 
 - **Configuration Dependencies:**
-  For full configuration management (TOML file loading, CLI overrides, etc.), the `github.com/LixenWraith/config` package is required when using the `Init` method. For simpler initialization without this external dependency, use `InitWithDefaults`.
+  For full configuration management (TOML file loading, CLI overrides, etc.), the `github.com/lixenwraith/config` package is required when using the `Init` method. For simpler initialization without this external dependency, use `InitWithDefaults`.
 
 - **Retention Accuracy:** Log retention relies on file modification times, which could potentially be affected by
   external file system operations.

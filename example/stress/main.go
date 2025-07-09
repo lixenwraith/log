@@ -1,3 +1,4 @@
+// FILE: example/stress/main.go
 package main
 
 import (
@@ -11,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/LixenWraith/config"
-	"github.com/LixenWraith/log"
+	"github.com/lixenwraith/config"
+	"github.com/lixenwraith/log"
 )
 
 const (
@@ -121,7 +122,7 @@ func main() {
 	// defer os.RemoveAll(logsDir) // Remove to keep the log directory
 
 	cfg := config.New()
-	_, err = cfg.Load(configFile, nil)
+	err = cfg.Load(configFile, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v.\n", err)
 		os.Exit(1)

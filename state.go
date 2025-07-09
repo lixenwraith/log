@@ -1,4 +1,4 @@
-// --- File: state.go ---
+// FILE: state.go
 package log
 
 import (
@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/LixenWraith/config"
+	"github.com/lixenwraith/config"
 )
 
 // State encapsulates the runtime state of the logger

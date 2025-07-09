@@ -1,4 +1,4 @@
-// --- File: format.go ---
+// FILE: format.go
 package log
 
 import (

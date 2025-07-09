@@ -1,4 +1,4 @@
-// --- File: logger.go ---
+// FILE: logger.go
 package log
 
 import (
@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LixenWraith/config"
+	"github.com/lixenwraith/config"
 )
 
 // Logger is the core struct that encapsulates all logger functionality

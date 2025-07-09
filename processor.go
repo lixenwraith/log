@@ -1,4 +1,4 @@
-// --- File: processor.go ---
+// FILE: processor.go
 package log
 
 import (

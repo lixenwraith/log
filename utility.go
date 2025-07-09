@@ -1,4 +1,4 @@
-// --- File: utility.go ---
+// FILE: utility.go
 package log
 
 import (

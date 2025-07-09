@@ -1,4 +1,4 @@
-// --- File: interface.go ---
+// FILE: interface.go
 package log
 
 import (

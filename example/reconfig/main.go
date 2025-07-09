@@ -1,3 +1,4 @@
+// FILE: example/reconfig/main.go
 package main
 
 import (
@@ -5,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/LixenWraith/log"
+	"github.com/lixenwraith/log"
 )
 
 // Simulate rapid reconfiguration

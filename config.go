@@ -1,4 +1,4 @@
-// --- File: config.go ---
+// FILE: config.go
 package log
 
 import (

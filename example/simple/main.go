@@ -1,3 +1,4 @@
+// FILE: example/simple/main.go
 package main
 
 import (
@@ -6,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LixenWraith/config"
-	"github.com/LixenWraith/log"
+	"github.com/lixenwraith/config"
+	"github.com/lixenwraith/log"
 )
 
 const configFile = "simple_config.toml"
@@ -51,7 +52,7 @@ func main() {
 
 	// Load config from file (and potentially CLI args - none provided here)
 	// The log package will register its keys during Init
-	_, err = cfg.Load(configFile, nil) // os.Args[1:] could be used here
+	err = cfg.Load(configFile, nil) // os.Args[1:] could be used here
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v. Using defaults.\n", err)
 		// Proceeding, log.Init will use registered defaults

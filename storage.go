@@ -1,3 +1,4 @@
+// FILE: storage.go
 package log
 
 import (

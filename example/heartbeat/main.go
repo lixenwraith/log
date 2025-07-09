@@ -1,3 +1,4 @@
+// FILE: example/heartbeat/main.go
 package main
 
 import (
@@ -5,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/LixenWraith/log"
+	"github.com/lixenwraith/log"
 )
 
 func main() {
