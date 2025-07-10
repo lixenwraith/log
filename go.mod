@@ -1,6 +1,6 @@
 module github.com/lixenwraith/log
 
-go 1.24.4
+go 1.24.5
 
 require (
 	github.com/lixenwraith/config v0.0.0-20250701170607-8515fa0543b6
