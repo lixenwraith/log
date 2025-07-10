@@ -177,7 +177,7 @@ adapter := compat.NewFastHTTPAdapter(logger,
         if strings.Contains(msg, "performance") {
             return log.LevelWarn
         }
-        // Return 0 to use default detection
+        // Return 0 to use the adapter's default log level (log.LevelInfo by default)
         return 0
     }),
 )

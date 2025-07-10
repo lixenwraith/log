@@ -90,7 +90,7 @@ func (l *Logger) registerConfigValues() {
 	// Register the entire config struct at once
 	err := l.config.RegisterStruct("log.", defaultConfig)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "log: warning - failed to register config values: %v\n", err)
+		l.internalLog("warning - failed to register config values: %v\n", err)
 	}
 }
 
@@ -150,13 +150,13 @@ func (l *Logger) applyAndReconfigureLocked() error {
 	minInterval, _ := l.config.Int64("log.min_check_interval_ms")
 	maxInterval, _ := l.config.Int64("log.max_check_interval_ms")
 	if minInterval > maxInterval {
-		fmt.Fprintf(os.Stderr, "log: warning - min_check_interval_ms (%d) > max_check_interval_ms (%d), max will be used\n",
+		l.internalLog("warning - min_check_interval_ms (%d) > max_check_interval_ms (%d), max will be used\n",
 			minInterval, maxInterval)
 
 		// Update min_check_interval_ms to equal max_check_interval_ms
 		err := l.config.Set("log.min_check_interval_ms", maxInterval)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "log: warning - failed to update min_check_interval_ms: %v\n", err)
+			l.internalLog("warning - failed to update min_check_interval_ms: %v\n", err)
 		}
 	}
 
@@ -195,7 +195,7 @@ func (l *Logger) applyAndReconfigureLocked() error {
 			// Sync and close the file
 			_ = currentFile.Sync()
 			if err := currentFile.Close(); err != nil {
-				fmt.Fprintf(os.Stderr, "log: warning - failed to close log file during disable: %v\n", err)
+				l.internalLog("warning - failed to close log file during disable: %v\n", err)
 			}
 		}
 		l.state.CurrentFile.Store((*os.File)(nil))
@@ -212,7 +212,7 @@ func (l *Logger) applyAndReconfigureLocked() error {
 		if currentFile != nil && currentFile != logFile {
 			_ = currentFile.Sync()
 			if err := currentFile.Close(); err != nil {
-				fmt.Fprintf(os.Stderr, "log: warning - failed to close old log file: %v\n", err)
+				l.internalLog("warning - failed to close old log file: %v\n", err)
 			}
 		}
 
@@ -388,4 +388,22 @@ func (l *Logger) sendLogRecord(record logRecord) {
 		// Channel buffer is full or channel is closed
 		l.state.DroppedLogs.Add(1)
 	}
+}
+
+// internalLog handles writing internal logger diagnostics to stderr, if enabled.
+// This centralizes all internal error reporting and makes it configurable.
+func (l *Logger) internalLog(format string, args ...any) {
+	// Check if internal error reporting is enabled
+	enabled, _ := l.config.Bool("log.internal_errors_to_stderr")
+	if !enabled {
+		return
+	}
+
+	// Ensure consistent "log: " prefix
+	if !strings.HasPrefix(format, "log: ") {
+		format = "log: " + format
+	}
+
+	// Write to stderr
+	fmt.Fprintf(os.Stderr, format, args...)
 }

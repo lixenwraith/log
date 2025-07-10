@@ -286,6 +286,50 @@ logger.Info("Batch processing",
 )
 ```
 
+## Internal Error Handling
+
+The logger may encounter internal errors during operation (e.g., file rotation failures, disk space issues). By default, writing these errors to stderr is disabled, but can be enabled in configuration for diagnostic purposes.
+
+### Controlling Internal Error Output
+
+For applications requiring clean stderr output, keep internal error messages disabled:
+
+```go
+logger.InitWithDefaults(
+    "internal_errors_to_stderr=false",  // Suppress internal diagnostics
+)
+```
+
+### When to Keep Internal Errors Disabled
+
+Consider disabling internal error output for:
+
+- CLI tools producing structured output
+- Daemons with strict stderr requirements
+- Applications with custom error monitoring
+- Container environments with log aggregation
+
+### Monitoring Without stderr
+
+When internal errors are disabled, monitor logger health using:
+
+1. **Heartbeat monitoring**: Detect issues via heartbeat logs
+   ```go
+   logger.InitWithDefaults(
+       "internal_errors_to_stderr=false",
+       "heartbeat_level=2",  // Include disk stats
+       "heartbeat_interval_s=60",
+   )
+   ```
+
+2. **Check for dropped logs**: The logger tracks dropped messages
+   ```go
+   // Dropped logs appear in regular log output when possible
+   // Look for: "Logs were dropped" messages
+   ```
+
+3. **External monitoring**: Monitor disk space and file system health independently
+
 ## Logging Patterns
 
 ### Request Lifecycle

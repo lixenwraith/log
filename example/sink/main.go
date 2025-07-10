@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	logDirectory = "./temp_logs"
+	logDirectory = "./logs"
 	logInterval  = 200 * time.Millisecond // Shorter interval for quicker tests
 )
 

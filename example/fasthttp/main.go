@@ -71,5 +71,5 @@ func customLevelDetector(msg string) int64 {
 	}
 
 	// Use default detection
-	return compat.detectLogLevel(msg)
+	return compat.DetectLogLevel(msg)
 }

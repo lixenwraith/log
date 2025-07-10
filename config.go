@@ -45,6 +45,9 @@ type Config struct {
 	EnableStdout bool   `toml:"enable_stdout"` // Mirror logs to stdout/stderr
 	StdoutTarget string `toml:"stdout_target"` // "stdout" or "stderr"
 	DisableFile  bool   `toml:"disable_file"`  // Disable file output entirely
+
+	// Internal error handling
+	InternalErrorsToStderr bool `toml:"internal_errors_to_stderr"` // Write internal errors to stderr
 }
 
 // defaultConfig is the single source for all configurable default values
@@ -87,6 +90,9 @@ var defaultConfig = Config{
 	EnableStdout: false,
 	StdoutTarget: "stdout",
 	DisableFile:  false,
+
+	// Internal error handling
+	InternalErrorsToStderr: false,
 }
 
 // DefaultConfig returns a copy of the default configuration

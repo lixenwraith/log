@@ -247,7 +247,10 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 	maxSizeMB, _ := l.config.Int64("log.max_size_mb")
 	if maxSizeMB > 0 && estimatedSize > maxSizeMB*1024*1024 {
 		if err := l.rotateLogFile(); err != nil {
-			fmtFprintf(os.Stderr, "log: failed to rotate log file: %v\n", err)
+			l.internalLog("failed to rotate log file: %v\n", err)
+			// Account for the dropped log that triggered the failed rotation
+			l.state.DroppedLogs.Add(1)
+			return 0
 		}
 	}
 
@@ -256,7 +259,7 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 	if currentLogFile, isFile := cfPtr.(*os.File); isFile && currentLogFile != nil {
 		n, err := currentLogFile.Write(data)
 		if err != nil {
-			fmtFprintf(os.Stderr, "log: failed to write to log file: %v\n", err)
+			l.internalLog("failed to write to log file: %v\n", err)
 			l.state.DroppedLogs.Add(1)
 			l.performDiskCheck(true)
 			return 0
@@ -297,7 +300,7 @@ func (l *Logger) handleRetentionCheck() {
 				if err := l.cleanExpiredLogs(earliest); err == nil {
 					l.updateEarliestFileTime()
 				} else {
-					fmtFprintf(os.Stderr, "log: failed to clean expired logs: %v\n", err)
+					l.internalLog("failed to clean expired logs: %v\n", err)
 				}
 			}
 		} else if !ok || earliest.IsZero() {
@@ -408,14 +411,14 @@ func (l *Logger) logDiskHeartbeat() {
 	if err == nil {
 		totalSizeMB = float64(dirSize) / (1024 * 1024)
 	} else {
-		fmtFprintf(os.Stderr, "log: warning - heartbeat failed to get dir size: %v\n", err)
+		l.internalLog("warning - heartbeat failed to get dir size: %v\n", err)
 	}
 
 	count, err := l.getLogFileCount(dir, ext)
 	if err == nil {
 		fileCount = count
 	} else {
-		fmtFprintf(os.Stderr, "log: warning - heartbeat failed to get file count: %v\n", err)
+		l.internalLog("warning - heartbeat failed to get file count: %v\n", err)
 	}
 
 	diskArgs := []any{
@@ -489,25 +492,25 @@ func (l *Logger) writeHeartbeatRecord(level int64, args []any) {
 	// Write to file
 	cfPtr := l.state.CurrentFile.Load()
 	if cfPtr == nil {
-		fmtFprintf(os.Stderr, "log: error - current file handle is nil during heartbeat\n")
+		l.internalLog("error - current file handle is nil during heartbeat\n")
 		return
 	}
 
 	currentLogFile, isFile := cfPtr.(*os.File)
 	if !isFile || currentLogFile == nil {
-		fmtFprintf(os.Stderr, "log: error - invalid file handle type during heartbeat\n")
+		l.internalLog("error - invalid file handle type during heartbeat\n")
 		return
 	}
 
 	n, err := currentLogFile.Write(hbData)
 	if err != nil {
-		fmtFprintf(os.Stderr, "log: failed to write heartbeat: %v\n", err)
+		l.internalLog("failed to write heartbeat: %v\n", err)
 		l.performDiskCheck(true) // Force disk check on write failure
 
 		// One retry after disk check
 		n, err = currentLogFile.Write(hbData)
 		if err != nil {
-			fmtFprintf(os.Stderr, "log: failed to write heartbeat on retry: %v\n", err)
+			l.internalLog("failed to write heartbeat on retry: %v\n", err)
 		} else {
 			l.state.CurrentSize.Add(int64(n))
 		}

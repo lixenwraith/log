@@ -67,7 +67,7 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 
 	freeSpace, err := l.getDiskFreeSpace(dir)
 	if err != nil {
-		fmtFprintf(os.Stderr, "log: warning - failed to check free disk space for '%s': %v\n", dir, err)
+		l.internalLog("warning - failed to check free disk space for '%s': %v\n", dir, err)
 		if l.state.DiskStatusOK.Load() {
 			l.state.DiskStatusOK.Store(false)
 		}
@@ -84,7 +84,7 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 	if maxTotal > 0 {
 		dirSize, err := l.getLogDirSize(dir, ext)
 		if err != nil {
-			fmtFprintf(os.Stderr, "log: warning - failed to check log directory size for '%s': %v\n", dir, err)
+			l.internalLog("warning - failed to check log directory size for '%s': %v\n", dir, err)
 			if l.state.DiskStatusOK.Load() {
 				l.state.DiskStatusOK.Store(false)
 			}
@@ -234,7 +234,7 @@ func (l *Logger) cleanOldLogs(required int64) error {
 		}
 		filePath := filepath.Join(dir, log.name)
 		if err := os.Remove(filePath); err != nil {
-			fmtFprintf(os.Stderr, "log: failed to remove old log file '%s': %v\n", filePath, err)
+			l.internalLog("failed to remove old log file '%s': %v\n", filePath, err)
 			continue
 		}
 		freedSpace += log.size
@@ -330,7 +330,7 @@ func (l *Logger) cleanExpiredLogs(oldest time.Time) error {
 		if info.ModTime().Before(cutoffTime) {
 			filePath := filepath.Join(dir, entry.Name())
 			if err := os.Remove(filePath); err != nil {
-				fmtFprintf(os.Stderr, "log: failed to remove expired log file '%s': %v\n", filePath, err)
+				l.internalLog("failed to remove expired log file '%s': %v\n", filePath, err)
 			} else {
 				deletedCount++
 				l.state.TotalDeletions.Add(1)
@@ -388,7 +388,7 @@ func (l *Logger) rotateLogFile() error {
 	if oldFilePtr != nil {
 		if oldFile, ok := oldFilePtr.(*os.File); ok && oldFile != nil {
 			if err := oldFile.Close(); err != nil {
-				fmtFprintf(os.Stderr, "log: failed to close old log file '%s': %v\n", oldFile.Name(), err)
+				l.internalLog("failed to close old log file '%s': %v\n", oldFile.Name(), err)
 				// Continue with new file anyway
 			}
 		}

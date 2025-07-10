@@ -3,7 +3,6 @@ package log
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -66,14 +65,6 @@ func fmtErrorf(format string, args ...any) error {
 		format = "log: " + format
 	}
 	return fmt.Errorf(format, args...)
-}
-
-// fmtFprintf wrapper (used for internal errors)
-func fmtFprintf(w *os.File, format string, args ...any) {
-	if !strings.HasPrefix(format, "log: ") {
-		format = "log: " + format
-	}
-	fmt.Fprintf(w, format, args...)
 }
 
 // combineErrors helper

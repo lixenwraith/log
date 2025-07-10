@@ -57,13 +57,14 @@ heartbeat_interval_s = 300
 
 ### Basic Settings
 
-| Parameter | Type | Description | Default |
-|-----------|------|-------------|---------|
-| `level` | `int64` | Minimum log level (-4=Debug, 0=Info, 4=Warn, 8=Error) | `0` |
-| `name` | `string` | Base name for log files | `"log"` |
+| Parameter | Type | Description | Default    |
+|-----------|------|-------------|------------|
+| `level` | `int64` | Minimum log level (-4=Debug, 0=Info, 4=Warn, 8=Error) | `0`        |
+| `name` | `string` | Base name for log files | `"log"`    |
 | `directory` | `string` | Directory to store log files | `"./logs"` |
-| `format` | `string` | Output format: `"txt"` or `"json"` | `"txt"` |
-| `extension` | `string` | Log file extension (without dot) | `"log"` |
+| `format` | `string` | Output format: `"txt"` or `"json"` | `"txt"`    |
+| `extension` | `string` | Log file extension (without dot) | `"log"`    |
+| `internal_errors_to_stderr` | `bool` | Write logger's internal errors to stderr | `false`    |
 
 ### Output Control
 
@@ -158,6 +159,7 @@ logger.InitWithDefaults(
     "format=json",           // Structured for log aggregators
     "level=0",               // Info level
     "show_timestamp=true",   // Include timestamps
+    "internal_errors_to_stderr=false", // Suppress internal errors
 )
 ```
 
