@@ -13,6 +13,12 @@ import (
 
 // performSync syncs the current log file
 func (l *Logger) performSync() {
+	// Skip sync if file output is disabled
+	disableFile, _ := l.config.Bool("log.disable_file")
+	if disableFile {
+		return
+	}
+
 	cfPtr := l.state.CurrentFile.Load()
 	if cfPtr != nil {
 		if currentLogFile, isFile := cfPtr.(*os.File); isFile && currentLogFile != nil {
@@ -33,6 +39,17 @@ func (l *Logger) performSync() {
 // performDiskCheck checks disk space, triggers cleanup if needed, and updates status
 // Returns true if disk is OK, false otherwise
 func (l *Logger) performDiskCheck(forceCleanup bool) bool {
+	// Skip all disk checks if file output is disabled
+	disableFile, _ := l.config.Bool("log.disable_file")
+	if disableFile {
+		// Always return OK status when file output is disabled
+		if !l.state.DiskStatusOK.Load() {
+			l.state.DiskStatusOK.Store(true)
+			l.state.DiskFullLogged.Store(false)
+		}
+		return true
+	}
+
 	dir, _ := l.config.String("log.directory")
 	ext, _ := l.config.String("log.extension")
 	maxTotalMB, _ := l.config.Int64("log.max_total_size_mb")

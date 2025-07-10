@@ -4,6 +4,7 @@ package log
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -173,57 +174,92 @@ func (l *Logger) applyAndReconfigureLocked() error {
 		return fmtErrorf("failed to create log directory '%s': %w", dir, err)
 	}
 
-	// Check if we need to restart the processor
+	// Get current state
 	wasInitialized := l.state.IsInitialized.Load()
-	processorNeedsRestart := !wasInitialized
+	disableFile, _ := l.config.Bool("log.disable_file")
 
-	// Always restart the processor if initialized, to handle any config changes
-	// This is the simplest approach that works reliably for all config changes
-	if wasInitialized {
-		processorNeedsRestart = true
+	// Get current file handle
+	currentFilePtr := l.state.CurrentFile.Load()
+	var currentFile *os.File
+	if currentFilePtr != nil {
+		currentFile, _ = currentFilePtr.(*os.File)
 	}
 
-	// Restart processor if needed
-	if processorNeedsRestart {
-		// Close the old channel if reconfiguring
-		if wasInitialized {
-			oldCh := l.getCurrentLogChannel()
-			if oldCh != nil {
-				// Swap in a temporary closed channel
-				tempClosedChan := make(chan logRecord)
-				close(tempClosedChan)
-				l.state.ActiveLogChannel.Store(tempClosedChan)
+	// Determine if we need a new file
+	needsNewFile := !wasInitialized || currentFile == nil
 
-				// Close the actual old channel
-				close(oldCh)
+	// Handle file state transitions
+	if disableFile {
+		// When disabling file output, properly close the current file
+		if currentFile != nil {
+			// Sync and close the file
+			_ = currentFile.Sync()
+			if err := currentFile.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "log: warning - failed to close log file during disable: %v\n", err)
 			}
 		}
-
-		// Create the new channel
-		bufferSize, _ := l.config.Int64("log.buffer_size")
-		newLogChannel := make(chan logRecord, bufferSize)
-		l.state.ActiveLogChannel.Store(newLogChannel)
-
-		// Start the new processor
-		l.state.ProcessorExited.Store(false)
-		go l.processLogs(newLogChannel)
-	}
-
-	// Initialize new log file if needed
-	currentFileHandle := l.state.CurrentFile.Load()
-	needsNewFile := !wasInitialized || currentFileHandle == nil
-
-	if needsNewFile {
+		l.state.CurrentFile.Store((*os.File)(nil))
+		l.state.CurrentSize.Store(0)
+	} else if needsNewFile {
+		// When enabling file output or initializing, create new file
 		logFile, err := l.createNewLogFile()
 		if err != nil {
 			l.state.LoggerDisabled.Store(true)
-			return fmtErrorf("failed to create initial/new log file: %w", err)
+			return fmtErrorf("failed to create log file: %w", err)
 		}
+
+		// Close old file if transitioning from one file to another
+		if currentFile != nil && currentFile != logFile {
+			_ = currentFile.Sync()
+			if err := currentFile.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "log: warning - failed to close old log file: %v\n", err)
+			}
+		}
+
 		l.state.CurrentFile.Store(logFile)
 		l.state.CurrentSize.Store(0)
 		if fi, errStat := logFile.Stat(); errStat == nil {
 			l.state.CurrentSize.Store(fi.Size())
 		}
+	}
+
+	// Close the old channel if reconfiguring
+	if wasInitialized {
+		oldCh := l.getCurrentLogChannel()
+		if oldCh != nil {
+			// Create new channel then close old channel
+			bufferSize, _ := l.config.Int64("log.buffer_size")
+			newLogChannel := make(chan logRecord, bufferSize)
+			l.state.ActiveLogChannel.Store(newLogChannel)
+			close(oldCh)
+
+			// Start new processor with new channel
+			l.state.ProcessorExited.Store(false)
+			go l.processLogs(newLogChannel)
+		}
+	} else {
+		// Initial startup
+		bufferSize, _ := l.config.Int64("log.buffer_size")
+		newLogChannel := make(chan logRecord, bufferSize)
+		l.state.ActiveLogChannel.Store(newLogChannel)
+		l.state.ProcessorExited.Store(false)
+		go l.processLogs(newLogChannel)
+	}
+
+	// Setup stdout writer based on config
+	enableStdout, _ := l.config.Bool("log.enable_stdout")
+	if enableStdout {
+		target, _ := l.config.String("log.stdout_target")
+		if target == "stderr" {
+			var writer io.Writer = os.Stderr
+			l.state.StdoutWriter.Store(&sink{w: writer})
+		} else if target == "stdout" {
+			var writer io.Writer = os.Stdout
+			l.state.StdoutWriter.Store(&sink{w: writer})
+		}
+	} else {
+		var writer io.Writer = io.Discard
+		l.state.StdoutWriter.Store(&sink{w: writer})
 	}
 
 	// Mark as initialized
@@ -260,6 +296,9 @@ func (l *Logger) loadCurrentConfig() *Config {
 	cfg.EnablePeriodicSync, _ = l.config.Bool("log.enable_periodic_sync")
 	cfg.HeartbeatLevel, _ = l.config.Int64("log.heartbeat_level")
 	cfg.HeartbeatIntervalS, _ = l.config.Int64("log.heartbeat_interval_s")
+	cfg.EnableStdout, _ = l.config.Bool("log.enable_stdout")
+	cfg.StdoutTarget, _ = l.config.String("log.stdout_target")
+	cfg.DisableFile, _ = l.config.Bool("log.disable_file")
 	return cfg
 }
 

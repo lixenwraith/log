@@ -144,6 +144,9 @@ if err != nil {
 | `max_check_interval_ms`    | `int64`   | Maximum interval (ms) for adaptive disk checks                            | `60000`       |
 | `heartbeat_level`          | `int64`   | Heartbeat detail level (0=disabled, 1=proc, 2=proc+disk, 3=proc+disk+sys) | `0`           |
 | `heartbeat_interval_s`     | `int64`   | Interval (s) between heartbeat messages                                   | `60`          |
+| `enable_stdout`            | `bool`    | Mirror all log output to stdout/stderr                                    | `false`       |
+| `stdout_target`            | `string`  | Target for console output (`"stdout"` or `"stderr"`)                      | `"stdout"`    |
+| `disable_file`             | `bool`    | Disable file output entirely (console-only mode)                          | `false`       |
 
 ## API Reference
 
@@ -209,6 +212,53 @@ Called on an initialized `*Logger` instance.
 - **`LevelProc (12)`, `LevelDisk (16)`, `LevelSys (20)` (`int64`)**: Heartbeat log level constants. These levels bypass
   the configured `level` filter.
 - **`FlagShowTimestamp`, `FlagShowLevel`, `FlagDefault`**: Record flag constants controlling output format.
+
+### Console Output Configuration
+
+The logger supports flexible output routing with options to mirror logs to stdout/stderr or disable file output entirely.
+
+**Console-only logging** (no file output):
+```go
+logger := log.NewLogger()
+err := logger.InitWithDefaults(
+"enable_stdout=true",
+"disable_file=true",
+"level=-4",  // Debug level
+)
+defer logger.Shutdown()
+
+logger.Info("This goes only to console")
+```
+
+**Dual output** (both file and console):
+```go
+gologger := log.NewLogger()
+err := logger.InitWithDefaults(
+"directory=/var/log/app",
+"enable_stdout=true",
+"stdout_target=stderr",  // Use stderr to keep stdout clean
+)
+defer logger.Shutdown()
+
+logger.Info("This goes to both file and stderr")
+```
+
+**Dynamic configuration** (toggle at runtime):
+```go
+// Start with file-only logging
+logger := log.NewLogger()
+cfg := config.New()
+cfg.Load("app.toml", os.Args[1:])
+logger.Init(cfg, "logging")
+
+// Later, enable console output dynamically
+cfg.Set("logging.enable_stdout", true)
+logger.Init(cfg, "logging") // Reconfigure
+
+// Or disable file output
+cfg.Set("logging.disable_file", true)
+logger.Init(cfg, "logging") // Now console-only
+```
 
 ## Implementation Details
 

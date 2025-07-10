@@ -2,6 +2,7 @@
 package log
 
 import (
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -31,6 +32,7 @@ type State struct {
 	LoggedDrops      atomic.Uint64 // Counter for dropped logs message already logged
 
 	ActiveLogChannel atomic.Value // stores chan logRecord
+	StdoutWriter     atomic.Value // stores io.Writer (os.Stdout, os.Stderr, or io.Discard)
 
 	// Heartbeat statistics
 	HeartbeatSequence  atomic.Uint64 // Counter for heartbeat sequence numbers
@@ -38,6 +40,11 @@ type State struct {
 	TotalLogsProcessed atomic.Uint64 // Counter for non-heartbeat logs successfully processed
 	TotalRotations     atomic.Uint64 // Counter for successful log rotations
 	TotalDeletions     atomic.Uint64 // Counter for successful log deletions (cleanup/retention)
+}
+
+// sink is a wrapper around an io.Writer, atomic value type change workaround
+type sink struct {
+	w io.Writer
 }
 
 // Init initializes or reconfigures the logger using the provided config.Config instance

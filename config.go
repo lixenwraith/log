@@ -40,6 +40,11 @@ type Config struct {
 	// Heartbeat configuration
 	HeartbeatLevel     int64 `toml:"heartbeat_level"`      // 0=disabled, 1=proc only, 2=proc+disk, 3=proc+disk+sys
 	HeartbeatIntervalS int64 `toml:"heartbeat_interval_s"` // Interval seconds for heartbeat
+
+	// Stdout/console output settings
+	EnableStdout bool   `toml:"enable_stdout"` // Mirror logs to stdout/stderr
+	StdoutTarget string `toml:"stdout_target"` // "stdout" or "stderr"
+	DisableFile  bool   `toml:"disable_file"`  // Disable file output entirely
 }
 
 // defaultConfig is the single source for all configurable default values
@@ -77,6 +82,11 @@ var defaultConfig = Config{
 	// Heartbeat settings
 	HeartbeatLevel:     0,
 	HeartbeatIntervalS: 60,
+
+	// Stdout settings
+	EnableStdout: false,
+	StdoutTarget: "stdout",
+	DisableFile:  false,
 }
 
 // DefaultConfig returns a copy of the default configuration
@@ -139,5 +149,9 @@ func (c *Config) validate() error {
 	if c.HeartbeatLevel > 0 && c.HeartbeatIntervalS <= 0 {
 		return fmtErrorf("heartbeat_interval_s must be positive when heartbeat is enabled: %d", c.HeartbeatIntervalS)
 	}
+	if c.StdoutTarget != "stdout" && c.StdoutTarget != "stderr" {
+		return fmtErrorf("invalid stdout_target: '%s' (use stdout or stderr)", c.StdoutTarget)
+	}
+
 	return nil
 }
