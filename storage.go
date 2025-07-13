@@ -186,18 +186,17 @@ func (l *Logger) getLogDirSize(dir, fileExt string) (int64, error) {
 func (l *Logger) cleanOldLogs(required int64) error {
 	dir, _ := l.config.String("log.directory")
 	fileExt, _ := l.config.String("log.extension")
+	name, _ := l.config.String("log.name")
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmtErrorf("failed to read log directory '%s' for cleanup: %w", dir, err)
 	}
 
-	currentLogFileName := ""
-	cfPtr := l.state.CurrentFile.Load()
-	if cfPtr != nil {
-		if clf, ok := cfPtr.(*os.File); ok && clf != nil {
-			currentLogFileName = filepath.Base(clf.Name())
-		}
+	// Get the static log filename to exclude from deletion
+	staticLogName := name
+	if fileExt != "" {
+		staticLogName = name + "." + fileExt
 	}
 
 	type logFileMeta struct {
@@ -208,7 +207,10 @@ func (l *Logger) cleanOldLogs(required int64) error {
 	var logs []logFileMeta
 	targetExt := "." + fileExt
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != targetExt || entry.Name() == currentLogFileName {
+		if entry.IsDir() || entry.Name() == staticLogName {
+			continue
+		}
+		if fileExt != "" && filepath.Ext(entry.Name()) != targetExt {
 			continue
 		}
 		info, errInfo := entry.Info()
@@ -251,7 +253,7 @@ func (l *Logger) cleanOldLogs(required int64) error {
 func (l *Logger) updateEarliestFileTime() {
 	dir, _ := l.config.String("log.directory")
 	fileExt, _ := l.config.String("log.extension")
-	baseName, _ := l.config.String("log.name")
+	name, _ := l.config.String("log.name")
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -260,22 +262,24 @@ func (l *Logger) updateEarliestFileTime() {
 	}
 
 	var earliest time.Time
-	currentLogFileName := ""
-	cfPtr := l.state.CurrentFile.Load()
-	if cfPtr != nil {
-		if clf, ok := cfPtr.(*os.File); ok && clf != nil {
-			currentLogFileName = filepath.Base(clf.Name())
-		}
+	// Get the active log filename to exclude from timestamp tracking
+	staticLogName := name
+	if fileExt != "" {
+		staticLogName = name + "." + fileExt
 	}
 
 	targetExt := "." + fileExt
-	prefix := baseName + "_"
+	prefix := name + "_"
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		fname := entry.Name()
-		if !strings.HasPrefix(fname, prefix) || filepath.Ext(fname) != targetExt || fname == currentLogFileName {
+		// Skip the active log file
+		if fname == staticLogName {
+			continue
+		}
+		if !strings.HasPrefix(fname, prefix) || (fileExt != "" && filepath.Ext(fname) != targetExt) {
 			continue
 		}
 		info, errInfo := entry.Info()
@@ -293,6 +297,7 @@ func (l *Logger) updateEarliestFileTime() {
 func (l *Logger) cleanExpiredLogs(oldest time.Time) error {
 	dir, _ := l.config.String("log.directory")
 	fileExt, _ := l.config.String("log.extension")
+	name, _ := l.config.String("log.name")
 	retentionPeriodHrs, _ := l.config.Float64("log.retention_period_hrs")
 	rpDuration := time.Duration(retentionPeriodHrs * float64(time.Hour))
 
@@ -309,18 +314,20 @@ func (l *Logger) cleanExpiredLogs(oldest time.Time) error {
 		return fmtErrorf("failed to read log directory '%s' for retention cleanup: %w", dir, err)
 	}
 
-	currentLogFileName := ""
-	cfPtr := l.state.CurrentFile.Load()
-	if cfPtr != nil {
-		if clf, ok := cfPtr.(*os.File); ok && clf != nil {
-			currentLogFileName = filepath.Base(clf.Name())
-		}
+	// Get the active log filename to exclude from deletion
+	staticLogName := name
+	if fileExt != "" {
+		staticLogName = name + "." + fileExt
 	}
 
 	targetExt := "." + fileExt
 	var deletedCount int
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != targetExt || entry.Name() == currentLogFileName {
+		if entry.IsDir() || entry.Name() == staticLogName {
+			continue
+		}
+		// Only consider files with correct extension
+		if fileExt != "" && filepath.Ext(entry.Name()) != targetExt {
 			continue
 		}
 		info, errInfo := entry.Info()
@@ -344,29 +351,37 @@ func (l *Logger) cleanExpiredLogs(oldest time.Time) error {
 	return nil
 }
 
-// generateLogFileName creates a unique log filename using a timestamp
-func (l *Logger) generateLogFileName(timestamp time.Time) string {
+// getStaticLogFilePath returns the full path to the active log file
+func (l *Logger) getStaticLogFilePath() string {
+	dir, _ := l.config.String("log.directory")
+	name, _ := l.config.String("log.name")
+	ext, _ := l.config.String("log.extension")
+
+	// Handle extension with or without dot
+	filename := name
+	if ext != "" {
+		filename = name + "." + ext
+	}
+
+	return filepath.Join(dir, filename)
+}
+
+// generateArchiveLogFileName creates a timestamped filename for archived logs during rotation
+func (l *Logger) generateArchiveLogFileName(timestamp time.Time) string {
 	name, _ := l.config.String("log.name")
 	ext, _ := l.config.String("log.extension")
 	tsFormat := timestamp.Format("060102_150405")
 	nano := timestamp.Nanosecond()
-	return fmt.Sprintf("%s_%s_%d.%s", name, tsFormat, nano, ext)
+
+	if ext != "" {
+		return fmt.Sprintf("%s_%s_%d.%s", name, tsFormat, nano, ext)
+	}
+	return fmt.Sprintf("%s_%s_%d", name, tsFormat, nano)
 }
 
 // createNewLogFile generates a unique name and opens a new log file
 func (l *Logger) createNewLogFile() (*os.File, error) {
-	dir, _ := l.config.String("log.directory")
-	filename := l.generateLogFileName(time.Now())
-	fullPath := filepath.Join(dir, filename)
-
-	for i := 0; i < 5; i++ {
-		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-			break
-		}
-		time.Sleep(1 * time.Millisecond)
-		filename := l.generateLogFileName(time.Now())
-		fullPath = filepath.Join(dir, filename)
-	}
+	fullPath := l.getStaticLogFilePath()
 
 	file, err := os.OpenFile(fullPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -375,27 +390,71 @@ func (l *Logger) createNewLogFile() (*os.File, error) {
 	return file, nil
 }
 
-// rotateLogFile handles closing the current log file and opening a new one
+// rotateLogFile implements the rename-on-rotate strategy
+// Closes current file, renames it with timestamp, creates new static file
 func (l *Logger) rotateLogFile() error {
+	// Get current file handle
+	cfPtr := l.state.CurrentFile.Load()
+	if cfPtr == nil {
+		// No current file, just create a new one
+		newFile, err := l.createNewLogFile()
+		if err != nil {
+			return fmtErrorf("failed to create log file during rotation: %w", err)
+		}
+		l.state.CurrentFile.Store(newFile)
+		l.state.CurrentSize.Store(0)
+		l.state.TotalRotations.Add(1)
+		return nil
+	}
+
+	currentFile, ok := cfPtr.(*os.File)
+	if !ok || currentFile == nil {
+		// Invalid file handle, create new one
+		newFile, err := l.createNewLogFile()
+		if err != nil {
+			return fmtErrorf("failed to create log file during rotation: %w", err)
+		}
+		l.state.CurrentFile.Store(newFile)
+		l.state.CurrentSize.Store(0)
+		l.state.TotalRotations.Add(1)
+		return nil
+	}
+
+	// Close current file before renaming
+	if err := currentFile.Close(); err != nil {
+		l.internalLog("failed to close log file before rotation: %v\n", err)
+		// Continue with rotation anyway
+	}
+
+	// Generate archive filename with current timestamp
+	dir, _ := l.config.String("log.directory")
+	archiveName := l.generateArchiveLogFileName(time.Now())
+	archivePath := filepath.Join(dir, archiveName)
+
+	// Rename current file to archive name
+	currentPath := l.getStaticLogFilePath()
+	if err := os.Rename(currentPath, archivePath); err != nil {
+		// The original file is closed and couldn't be renamed. This is a terminal state for file logging.
+		l.internalLog("failed to rename log file from '%s' to '%s': %v. file logging disabled.",
+			currentPath, archivePath, err)
+		l.state.LoggerDisabled.Store(true)
+		return fmtErrorf("failed to rotate log file, logging is disabled: %w", err)
+	}
+
+	// Create new log file at static path
 	newFile, err := l.createNewLogFile()
 	if err != nil {
-		return fmtErrorf("failed to create new log file for rotation: %w", err)
+		return fmtErrorf("failed to create new log file after rotation: %w", err)
 	}
 
-	oldFilePtr := l.state.CurrentFile.Swap(newFile)
+	// Update state
+	l.state.CurrentFile.Store(newFile)
 	l.state.CurrentSize.Store(0)
-
-	if oldFilePtr != nil {
-		if oldFile, ok := oldFilePtr.(*os.File); ok && oldFile != nil {
-			if err := oldFile.Close(); err != nil {
-				l.internalLog("failed to close old log file '%s': %v\n", oldFile.Name(), err)
-				// Continue with new file anyway
-			}
-		}
-	}
-
-	l.updateEarliestFileTime()
 	l.state.TotalRotations.Add(1)
+
+	// Update earliest file time after successful rotation
+	l.updateEarliestFileTime()
+
 	return nil
 }
 

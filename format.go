@@ -10,13 +10,15 @@ import (
 
 // serializer manages the buffered writing of log entries.
 type serializer struct {
-	buf []byte
+	buf             []byte
+	timestampFormat string
 }
 
 // newSerializer creates a serializer instance.
 func newSerializer() *serializer {
 	return &serializer{
-		buf: make([]byte, 0, 4096), // Initial reasonable capacity
+		buf:             make([]byte, 0, 4096), // Initial reasonable capacity
+		timestampFormat: time.RFC3339Nano,      // Default until configured
 	}
 }
 
@@ -42,7 +44,7 @@ func (s *serializer) serializeJSON(flags int64, timestamp time.Time, level int64
 
 	if flags&FlagShowTimestamp != 0 {
 		s.buf = append(s.buf, `"time":"`...)
-		s.buf = timestamp.AppendFormat(s.buf, time.RFC3339Nano)
+		s.buf = timestamp.AppendFormat(s.buf, s.timestampFormat)
 		s.buf = append(s.buf, '"')
 		needsComma = true
 	}
@@ -90,7 +92,7 @@ func (s *serializer) serializeText(flags int64, timestamp time.Time, level int64
 	needsSpace := false
 
 	if flags&FlagShowTimestamp != 0 {
-		s.buf = timestamp.AppendFormat(s.buf, time.RFC3339Nano)
+		s.buf = timestamp.AppendFormat(s.buf, s.timestampFormat)
 		needsSpace = true
 	}
 
@@ -150,7 +152,7 @@ func (s *serializer) writeTextValue(v any) {
 	case nil:
 		s.buf = append(s.buf, "null"...)
 	case time.Time:
-		s.buf = val.AppendFormat(s.buf, time.RFC3339Nano)
+		s.buf = val.AppendFormat(s.buf, s.timestampFormat)
 	case error:
 		str := val.Error()
 		if len(str) == 0 || strings.ContainsRune(str, ' ') {
@@ -206,7 +208,7 @@ func (s *serializer) writeJSONValue(v any) {
 		s.buf = append(s.buf, "null"...)
 	case time.Time:
 		s.buf = append(s.buf, '"')
-		s.buf = val.AppendFormat(s.buf, time.RFC3339Nano)
+		s.buf = val.AppendFormat(s.buf, s.timestampFormat)
 		s.buf = append(s.buf, '"')
 	case error:
 		s.buf = append(s.buf, '"')
@@ -276,6 +278,14 @@ func (s *serializer) writeString(str string) {
 			s.buf = append(s.buf, str[start:i]...)
 		}
 	}
+}
+
+// Update cached format
+func (s *serializer) setTimestampFormat(format string) {
+	if format == "" {
+		format = time.RFC3339Nano
+	}
+	s.timestampFormat = format
 }
 
 const hexChars = "0123456789abcdef"

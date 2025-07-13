@@ -174,6 +174,11 @@ func (l *Logger) applyAndReconfigureLocked() error {
 		return fmtErrorf("failed to create log directory '%s': %w", dir, err)
 	}
 
+	// Update serializer format when config changes
+	if tsFormat, err := l.config.String("log.timestamp_format"); err == nil && tsFormat != "" {
+		l.serializer.setTimestampFormat(tsFormat)
+	}
+
 	// Get current state
 	wasInitialized := l.state.IsInitialized.Load()
 	disableFile, _ := l.config.Bool("log.disable_file")
@@ -281,6 +286,7 @@ func (l *Logger) loadCurrentConfig() *Config {
 	cfg.Extension, _ = l.config.String("log.extension")
 	cfg.ShowTimestamp, _ = l.config.Bool("log.show_timestamp")
 	cfg.ShowLevel, _ = l.config.Bool("log.show_level")
+	cfg.TimestampFormat, _ = l.config.String("log.timestamp_format")
 	cfg.BufferSize, _ = l.config.Int64("log.buffer_size")
 	cfg.MaxSizeMB, _ = l.config.Int64("log.max_size_mb")
 	cfg.MaxTotalSizeMB, _ = l.config.Int64("log.max_total_size_mb")

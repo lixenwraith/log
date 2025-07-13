@@ -109,6 +109,10 @@ func validateConfigValue(key string, value interface{}) error {
 		if v, ok := value.(string); ok && strings.HasPrefix(v, ".") {
 			return fmtErrorf("extension should not start with dot: %s", v)
 		}
+	case "timestamp_format":
+		if v, ok := value.(string); ok && strings.TrimSpace(v) == "" {
+			return fmtErrorf("timestamp_format cannot be empty")
+		}
 	case "buffer_size":
 		if v, ok := value.(int64); ok && v <= 0 {
 			return fmtErrorf("buffer_size must be positive: %d", v)

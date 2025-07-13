@@ -3,20 +3,22 @@ package log
 
 import (
 	"strings"
+	"time"
 )
 
 // Config holds all logger configuration values
 type Config struct {
 	// Basic settings
 	Level     int64  `toml:"level"`
-	Name      string `toml:"name"`
+	Name      string `toml:"name"` // Base name for log files
 	Directory string `toml:"directory"`
 	Format    string `toml:"format"` // "txt" or "json"
 	Extension string `toml:"extension"`
 
 	// Formatting
-	ShowTimestamp bool `toml:"show_timestamp"`
-	ShowLevel     bool `toml:"show_level"`
+	ShowTimestamp   bool   `toml:"show_timestamp"`
+	ShowLevel       bool   `toml:"show_level"`
+	TimestampFormat string `toml:"timestamp_format"` // Time format for log timestamps
 
 	// Buffer and size limits
 	BufferSize     int64 `toml:"buffer_size"`       // Channel buffer size
@@ -60,8 +62,9 @@ var defaultConfig = Config{
 	Extension: "log",
 
 	// Formatting
-	ShowTimestamp: true,
-	ShowLevel:     true,
+	ShowTimestamp:   true,
+	ShowLevel:       true,
+	TimestampFormat: time.RFC3339Nano,
 
 	// Buffer and size limits
 	BufferSize:     1024,
@@ -110,8 +113,8 @@ func (c *Config) validate() error {
 	if c.Format != "txt" && c.Format != "json" {
 		return fmtErrorf("invalid format: '%s' (use txt or json)", c.Format)
 	}
-	if strings.HasPrefix(c.Extension, ".") {
-		return fmtErrorf("extension should not start with dot: %s", c.Extension)
+	if strings.TrimSpace(c.TimestampFormat) == "" {
+		return fmtErrorf("timestamp_format cannot be empty")
 	}
 	if c.BufferSize <= 0 {
 		return fmtErrorf("buffer_size must be positive: %d", c.BufferSize)
