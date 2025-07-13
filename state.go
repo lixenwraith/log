@@ -29,7 +29,6 @@ type State struct {
 	CurrentSize      atomic.Int64  // Size of the current log file
 	EarliestFileTime atomic.Value  // stores time.Time for retention
 	DroppedLogs      atomic.Uint64 // Counter for logs dropped
-	LoggedDrops      atomic.Uint64 // Counter for dropped logs message already logged
 
 	ActiveLogChannel atomic.Value // stores chan logRecord
 	StdoutWriter     atomic.Value // stores io.Writer (os.Stdout, os.Stderr, or io.Discard)

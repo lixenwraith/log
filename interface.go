@@ -29,11 +29,12 @@ const (
 
 // logRecord represents a single log entry.
 type logRecord struct {
-	Flags     int64
-	TimeStamp time.Time
-	Level     int64
-	Trace     string
-	Args      []any
+	Flags           int64
+	TimeStamp       time.Time
+	Level           int64
+	Trace           string
+	Args            []any
+	unreportedDrops uint64 // Dropped log tracker
 }
 
 // Logger instance methods for configuration and logging at different levels.

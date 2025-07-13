@@ -334,21 +334,6 @@ func (l *Logger) log(flags int64, level int64, depth int64, args ...any) {
 		return
 	}
 
-	// Report dropped logs first if there has been any
-	currentDrops := l.state.DroppedLogs.Load()
-	logged := l.state.LoggedDrops.Load()
-	if currentDrops > logged {
-		if l.state.LoggedDrops.CompareAndSwap(logged, currentDrops) {
-			dropRecord := logRecord{
-				Flags:     FlagDefault,
-				TimeStamp: time.Now(),
-				Level:     LevelError,
-				Args:      []any{"Logs were dropped", "dropped_count", currentDrops - logged, "total_dropped", currentDrops},
-			}
-			l.sendLogRecord(dropRecord)
-		}
-	}
-
 	var trace string
 	if depth > 0 {
 		const skipTrace = 3 // log.Info -> log -> getTrace (Adjust if call stack changes)
@@ -356,11 +341,12 @@ func (l *Logger) log(flags int64, level int64, depth int64, args ...any) {
 	}
 
 	record := logRecord{
-		Flags:     flags,
-		TimeStamp: time.Now(),
-		Level:     level,
-		Trace:     trace,
-		Args:      args,
+		Flags:           flags,
+		TimeStamp:       time.Now(),
+		Level:           level,
+		Trace:           trace,
+		Args:            args,
+		unreportedDrops: 0, // 0 for regular logs
 	}
 	l.sendLogRecord(record)
 }
@@ -368,13 +354,14 @@ func (l *Logger) log(flags int64, level int64, depth int64, args ...any) {
 // sendLogRecord handles safe sending to the active channel
 func (l *Logger) sendLogRecord(record logRecord) {
 	defer func() {
-		if recover() != nil { // Catch panic on send to closed channel
-			l.state.DroppedLogs.Add(1)
+		if r := recover(); r != nil { // Catch panic on send to closed channel
+			l.handleFailedSend(record)
 		}
 	}()
 
 	if l.state.ShutdownCalled.Load() || l.state.LoggerDisabled.Load() {
-		l.state.DroppedLogs.Add(1)
+		// Process drops even if logger is disabled or shutting down
+		l.handleFailedSend(record)
 		return
 	}
 
@@ -383,11 +370,38 @@ func (l *Logger) sendLogRecord(record logRecord) {
 	// Non-blocking send
 	select {
 	case ch <- record:
-		// Success
+		// Success: record sent, channel was not full, check if log drops need to be reported
+		if record.unreportedDrops == 0 {
+			// Get number of dropped logs and reset the counter to zero
+			droppedCount := l.state.DroppedLogs.Swap(0)
+
+			if droppedCount > 0 {
+				// Dropped logs report
+				dropRecord := logRecord{
+					Flags:           FlagDefault,
+					TimeStamp:       time.Now(),
+					Level:           LevelError,
+					Args:            []any{"Logs were dropped", "dropped_count", droppedCount},
+					unreportedDrops: droppedCount, // Carry the count for recovery
+				}
+				// No success check is required, count is restored if it fails
+				l.sendLogRecord(dropRecord)
+			}
+		}
 	default:
-		// Channel buffer is full or channel is closed
-		l.state.DroppedLogs.Add(1)
+		l.handleFailedSend(record)
 	}
+}
+
+// handleFailedSend restores or increments drop counter
+func (l *Logger) handleFailedSend(record logRecord) {
+	// If the record was a drop report, add its carried count back.
+	// Otherwise, it was a regular log, so add 1.
+	amountToAdd := uint64(1)
+	if record.unreportedDrops > 0 {
+		amountToAdd = record.unreportedDrops
+	}
+	l.state.DroppedLogs.Add(amountToAdd)
 }
 
 // internalLog handles writing internal logger diagnostics to stderr, if enabled.
