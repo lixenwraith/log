@@ -2,7 +2,6 @@
 package log
 
 import (
-	"strings"
 	"time"
 )
 
@@ -107,59 +106,44 @@ func DefaultConfig() *Config {
 
 // validate performs basic sanity checks on the configuration values.
 func (c *Config) validate() error {
-	if strings.TrimSpace(c.Name) == "" {
-		return fmtErrorf("log name cannot be empty")
+	// Individual field validations
+	fields := map[string]any{
+		"name":                   c.Name,
+		"format":                 c.Format,
+		"extension":              c.Extension,
+		"timestamp_format":       c.TimestampFormat,
+		"buffer_size":            c.BufferSize,
+		"max_size_mb":            c.MaxSizeMB,
+		"max_total_size_mb":      c.MaxTotalSizeMB,
+		"min_disk_free_mb":       c.MinDiskFreeMB,
+		"flush_interval_ms":      c.FlushIntervalMs,
+		"disk_check_interval_ms": c.DiskCheckIntervalMs,
+		"min_check_interval_ms":  c.MinCheckIntervalMs,
+		"max_check_interval_ms":  c.MaxCheckIntervalMs,
+		"trace_depth":            c.TraceDepth,
+		"retention_period_hrs":   c.RetentionPeriodHrs,
+		"retention_check_mins":   c.RetentionCheckMins,
+		"heartbeat_level":        c.HeartbeatLevel,
+		"heartbeat_interval_s":   c.HeartbeatIntervalS,
+		"stdout_target":          c.StdoutTarget,
+		"level":                  c.Level,
 	}
-	if c.Format != "txt" && c.Format != "json" {
-		return fmtErrorf("invalid format: '%s' (use txt or json)", c.Format)
+
+	for key, value := range fields {
+		if err := validateConfigValue(key, value); err != nil {
+			return err
+		}
 	}
-	if strings.TrimSpace(c.TimestampFormat) == "" {
-		return fmtErrorf("timestamp_format cannot be empty")
-	}
-	if c.BufferSize <= 0 {
-		return fmtErrorf("buffer_size must be positive: %d", c.BufferSize)
-	}
-	if c.MaxSizeMB < 0 {
-		return fmtErrorf("max_size_mb cannot be negative: %d", c.MaxSizeMB)
-	}
-	if c.MaxTotalSizeMB < 0 {
-		return fmtErrorf("max_total_size_mb cannot be negative: %d", c.MaxTotalSizeMB)
-	}
-	if c.MinDiskFreeMB < 0 {
-		return fmtErrorf("min_disk_free_mb cannot be negative: %d", c.MinDiskFreeMB)
-	}
-	if c.FlushIntervalMs <= 0 {
-		return fmtErrorf("flush_interval_ms must be positive milliseconds: %d", c.FlushIntervalMs)
-	}
-	if c.DiskCheckIntervalMs <= 0 {
-		return fmtErrorf("disk_check_interval_ms must be positive milliseconds: %d", c.DiskCheckIntervalMs)
-	}
-	if c.MinCheckIntervalMs <= 0 {
-		return fmtErrorf("min_check_interval_ms must be positive milliseconds: %d", c.MinCheckIntervalMs)
-	}
-	if c.MaxCheckIntervalMs <= 0 {
-		return fmtErrorf("max_check_interval_ms must be positive milliseconds: %d", c.MaxCheckIntervalMs)
-	}
+
+	// Cross-field validations
 	if c.MinCheckIntervalMs > c.MaxCheckIntervalMs {
-		return fmtErrorf("min_check_interval_ms (%d) cannot be greater than max_check_interval_ms (%d)", c.MinCheckIntervalMs, c.MaxCheckIntervalMs)
+		return fmtErrorf("min_check_interval_ms (%d) cannot be greater than max_check_interval_ms (%d)",
+			c.MinCheckIntervalMs, c.MaxCheckIntervalMs)
 	}
-	if c.TraceDepth < 0 || c.TraceDepth > 10 {
-		return fmtErrorf("trace_depth must be between 0 and 10: %d", c.TraceDepth)
-	}
-	if c.RetentionPeriodHrs < 0 {
-		return fmtErrorf("retention_period_hrs cannot be negative: %f", c.RetentionPeriodHrs)
-	}
-	if c.RetentionCheckMins < 0 {
-		return fmtErrorf("retention_check_mins cannot be negative: %f", c.RetentionCheckMins)
-	}
-	if c.HeartbeatLevel < 0 || c.HeartbeatLevel > 3 {
-		return fmtErrorf("heartbeat_level must be between 0 and 3: %d", c.HeartbeatLevel)
-	}
+
 	if c.HeartbeatLevel > 0 && c.HeartbeatIntervalS <= 0 {
-		return fmtErrorf("heartbeat_interval_s must be positive when heartbeat is enabled: %d", c.HeartbeatIntervalS)
-	}
-	if c.StdoutTarget != "stdout" && c.StdoutTarget != "stderr" {
-		return fmtErrorf("invalid stdout_target: '%s' (use stdout or stderr)", c.StdoutTarget)
+		return fmtErrorf("heartbeat_interval_s must be positive when heartbeat is enabled: %d",
+			c.HeartbeatIntervalS)
 	}
 
 	return nil

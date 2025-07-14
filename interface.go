@@ -22,8 +22,9 @@ const (
 
 // Record flags for controlling output structure
 const (
-	FlagShowTimestamp int64 = 0b01
-	FlagShowLevel     int64 = 0b10
+	FlagShowTimestamp int64 = 0b001
+	FlagShowLevel     int64 = 0b010
+	FlagRaw           int64 = 0b100
 	FlagDefault             = FlagShowTimestamp | FlagShowLevel
 )
 
@@ -104,4 +105,11 @@ func (l *Logger) Message(args ...any) {
 // LogTrace writes a timestamp record with call trace but no level info.
 func (l *Logger) LogTrace(depth int, args ...any) {
 	l.log(FlagShowTimestamp, LevelInfo, int64(depth), args...)
+}
+
+// Write outputs raw, unformatted data regardless of configured format.
+// This method bypasses all formatting (timestamps, levels, JSON structure)
+// and writes args as space-separated strings without a trailing newline.
+func (l *Logger) Write(args ...any) {
+	l.log(FlagRaw, LevelInfo, 0, args...)
 }

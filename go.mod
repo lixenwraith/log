@@ -3,6 +3,7 @@ module github.com/lixenwraith/log
 go 1.24.5
 
 require (
+	github.com/davecgh/go-spew v1.1.1
 	github.com/lixenwraith/config v0.0.0-20250712170030-7d38402e0497
 	github.com/panjf2000/gnet/v2 v2.9.1
 	github.com/valyala/fasthttp v1.63.0

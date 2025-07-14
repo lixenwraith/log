@@ -2,10 +2,15 @@
 package log
 
 import (
+	"bytes"
+	"encoding/hex"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/davecgh/go-spew/spew"
 )
 
 // serializer manages the buffered writing of log entries.
@@ -27,14 +32,174 @@ func (s *serializer) reset() {
 	s.buf = s.buf[:0]
 }
 
-// serialize converts log entries to the configured format, JSON or (default) text.
+// serialize converts log entries to the configured format, JSON, raw, or (default) text.
 func (s *serializer) serialize(format string, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
 	s.reset()
+
+	// 1. Prioritize the on-demand flag from Write()
+	if flags&FlagRaw != 0 {
+		return s.serializeRaw(args)
+	}
+
+	// 2. Handle the instance-wide configuration setting
+	if format == "raw" {
+		return s.serializeRaw(args)
+	}
 
 	if format == "json" {
 		return s.serializeJSON(flags, timestamp, level, trace, args)
 	}
 	return s.serializeText(flags, timestamp, level, trace, args)
+}
+
+// serializeRaw formats args as space-separated strings without metadata or newline.
+// This is used for both format="raw" configuration and Logger.Write() calls.
+func (s *serializer) serializeRaw(args []any) []byte {
+	needsSpace := false
+
+	for _, arg := range args {
+		if needsSpace {
+			s.buf = append(s.buf, ' ')
+		}
+		s.writeRawValue(arg)
+		needsSpace = true
+	}
+
+	// No newline appended for raw format
+	return s.buf
+}
+
+// writeRawValue converts any value to its raw string representation.
+// fallback to go-spew/spew with data structure information for types that are not explicitly supported.
+func (s *serializer) writeRawValue(v any) {
+	switch val := v.(type) {
+	case string:
+		s.buf = append(s.buf, val...)
+	case int:
+		s.buf = strconv.AppendInt(s.buf, int64(val), 10)
+	case int64:
+		s.buf = strconv.AppendInt(s.buf, val, 10)
+	case uint:
+		s.buf = strconv.AppendUint(s.buf, uint64(val), 10)
+	case uint64:
+		s.buf = strconv.AppendUint(s.buf, val, 10)
+	case float32:
+		s.buf = strconv.AppendFloat(s.buf, float64(val), 'f', -1, 32)
+	case float64:
+		s.buf = strconv.AppendFloat(s.buf, val, 'f', -1, 64)
+	case bool:
+		s.buf = strconv.AppendBool(s.buf, val)
+	case nil:
+		s.buf = append(s.buf, "nil"...)
+	case time.Time:
+		s.buf = val.AppendFormat(s.buf, s.timestampFormat)
+	case error:
+		s.buf = append(s.buf, val.Error()...)
+	case fmt.Stringer:
+		s.buf = append(s.buf, val.String()...)
+	case []byte:
+		s.buf = hex.AppendEncode(s.buf, val) // prevent special character corruption
+	default:
+		// For all other types (structs, maps, pointers, arrays, etc.), delegate to spew.
+		// It is not the intended use of raw logging.
+		// The output of such cases are structured and have type and size information set by spew.
+		// Converting to string similar to non-raw logs is not used to avoid binary log corruption.
+		var b bytes.Buffer
+
+		// Use a custom dumper for log-friendly, compact output.
+		dumper := &spew.ConfigState{
+			Indent:                  " ",
+			MaxDepth:                10,
+			DisablePointerAddresses: true, // Cleaner for logs
+			DisableCapacities:       true, // Less noise
+			SortKeys:                true, // Consistent map output
+		}
+
+		dumper.Fdump(&b, val)
+
+		// Trim trailing new line added by spew
+		s.buf = append(s.buf, bytes.TrimSpace(b.Bytes())...)
+	}
+}
+
+// This is the safe, dependency-free replacement for fmt.Sprintf.
+func (s *serializer) reflectValue(v reflect.Value) {
+	// Safely handle invalid, nil pointer, or nil interface values.
+	if !v.IsValid() {
+		s.buf = append(s.buf, "nil"...)
+		return
+	}
+	// Dereference pointers and interfaces to get the concrete value.
+	// Recurse to handle multiple levels of pointers.
+	kind := v.Kind()
+	if kind == reflect.Ptr || kind == reflect.Interface {
+		if v.IsNil() {
+			s.buf = append(s.buf, "nil"...)
+			return
+		}
+		s.reflectValue(v.Elem())
+		return
+	}
+
+	switch kind {
+	case reflect.String:
+		s.buf = append(s.buf, v.String()...)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		s.buf = strconv.AppendInt(s.buf, v.Int(), 10)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		s.buf = strconv.AppendUint(s.buf, v.Uint(), 10)
+	case reflect.Float32, reflect.Float64:
+		s.buf = strconv.AppendFloat(s.buf, v.Float(), 'f', -1, 64)
+	case reflect.Bool:
+		s.buf = strconv.AppendBool(s.buf, v.Bool())
+
+	case reflect.Slice, reflect.Array:
+		// Check if it's a byte slice ([]uint8) and hex-encode it for safety.
+		if v.Type().Elem().Kind() == reflect.Uint8 {
+			s.buf = append(s.buf, "0x"...)
+			s.buf = hex.AppendEncode(s.buf, v.Bytes())
+			return
+		}
+		s.buf = append(s.buf, '[')
+		for i := 0; i < v.Len(); i++ {
+			if i > 0 {
+				s.buf = append(s.buf, ' ')
+			}
+			s.reflectValue(v.Index(i))
+		}
+		s.buf = append(s.buf, ']')
+
+	case reflect.Struct:
+		s.buf = append(s.buf, '{')
+		for i := 0; i < v.NumField(); i++ {
+			if !v.Type().Field(i).IsExported() {
+				continue // Skip unexported fields
+			}
+			if i > 0 {
+				s.buf = append(s.buf, ' ')
+			}
+			s.buf = append(s.buf, v.Type().Field(i).Name...)
+			s.buf = append(s.buf, ':')
+			s.reflectValue(v.Field(i))
+		}
+		s.buf = append(s.buf, '}')
+
+	case reflect.Map:
+		s.buf = append(s.buf, '{')
+		for i, key := range v.MapKeys() {
+			if i > 0 {
+				s.buf = append(s.buf, ' ')
+			}
+			s.reflectValue(key)
+			s.buf = append(s.buf, ':')
+			s.reflectValue(v.MapIndex(key))
+		}
+		s.buf = append(s.buf, '}')
+
+	default:
+		// As a final fallback, use fmt, but this should rarely be hit.
+		s.buf = append(s.buf, fmt.Sprint(v.Interface())...)
+	}
 }
 
 // serializeJSON formats log entries as JSON (time, level, trace, fields).
