@@ -2,6 +2,11 @@
 package log
 
 import (
+	"errors"
+	"fmt"
+	"github.com/lixenwraith/config"
+	"reflect"
+	"strings"
 	"time"
 )
 
@@ -11,7 +16,7 @@ type Config struct {
 	Level     int64  `toml:"level"`
 	Name      string `toml:"name"` // Base name for log files
 	Directory string `toml:"directory"`
-	Format    string `toml:"format"` // "txt" or "json"
+	Format    string `toml:"format"` // "txt", "raw", or "json"
 	Extension string `toml:"extension"`
 
 	// Formatting
@@ -100,39 +105,206 @@ var defaultConfig = Config{
 // DefaultConfig returns a copy of the default configuration
 func DefaultConfig() *Config {
 	// Create a copy to prevent modifications to the original
-	config := defaultConfig
-	return &config
+	copiedConfig := defaultConfig
+	return &copiedConfig
 }
 
-// validate performs basic sanity checks on the configuration values.
-func (c *Config) validate() error {
-	// Individual field validations
-	fields := map[string]any{
-		"name":                   c.Name,
-		"format":                 c.Format,
-		"extension":              c.Extension,
-		"timestamp_format":       c.TimestampFormat,
-		"buffer_size":            c.BufferSize,
-		"max_size_mb":            c.MaxSizeMB,
-		"max_total_size_mb":      c.MaxTotalSizeMB,
-		"min_disk_free_mb":       c.MinDiskFreeMB,
-		"flush_interval_ms":      c.FlushIntervalMs,
-		"disk_check_interval_ms": c.DiskCheckIntervalMs,
-		"min_check_interval_ms":  c.MinCheckIntervalMs,
-		"max_check_interval_ms":  c.MaxCheckIntervalMs,
-		"trace_depth":            c.TraceDepth,
-		"retention_period_hrs":   c.RetentionPeriodHrs,
-		"retention_check_mins":   c.RetentionCheckMins,
-		"heartbeat_level":        c.HeartbeatLevel,
-		"heartbeat_interval_s":   c.HeartbeatIntervalS,
-		"stdout_target":          c.StdoutTarget,
-		"level":                  c.Level,
+// NewConfigFromFile loads configuration from a TOML file and returns a validated Config
+func NewConfigFromFile(path string) (*Config, error) {
+	cfg := DefaultConfig()
+
+	// Use lixenwraith/config as a loader
+	loader := config.New()
+
+	// Register the struct to enable proper unmarshaling
+	if err := loader.RegisterStruct("log.", *cfg); err != nil {
+		return nil, fmt.Errorf("failed to register config struct: %w", err)
 	}
 
-	for key, value := range fields {
-		if err := validateConfigValue(key, value); err != nil {
-			return err
+	// Load from file (handles file not found gracefully)
+	if err := loader.Load(path, nil); err != nil && !errors.Is(err, config.ErrConfigNotFound) {
+		return nil, fmt.Errorf("failed to load config from %s: %w", path, err)
+	}
+
+	// Extract values into our Config struct
+	if err := extractConfig(loader, "log.", cfg); err != nil {
+		return nil, fmt.Errorf("failed to extract config values: %w", err)
+	}
+
+	// Validate the loaded configuration
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+// NewConfigFromDefaults creates a Config with default values and applies overrides
+func NewConfigFromDefaults(overrides map[string]any) (*Config, error) {
+	cfg := DefaultConfig()
+
+	// Apply overrides using reflection
+	if err := applyOverrides(cfg, overrides); err != nil {
+		return nil, fmt.Errorf("failed to apply overrides: %w", err)
+	}
+
+	// Validate the configuration
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+// extractConfig extracts values from lixenwraith/config into our Config struct
+func extractConfig(loader *config.Config, prefix string, cfg *Config) error {
+	v := reflect.ValueOf(cfg).Elem()
+	t := v.Type()
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		fieldValue := v.Field(i)
+
+		// Get the toml tag to determine the config key
+		tomlTag := field.Tag.Get("toml")
+		if tomlTag == "" {
+			continue
 		}
+
+		key := prefix + tomlTag
+
+		// Get value from loader
+		val, found := loader.Get(key)
+		if !found {
+			continue // Use default value
+		}
+
+		// Set the field value with type conversion
+		if err := setFieldValue(fieldValue, val); err != nil {
+			return fmt.Errorf("failed to set field %s: %w", field.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// applyOverrides applies a map of overrides to the Config struct
+func applyOverrides(cfg *Config, overrides map[string]any) error {
+	v := reflect.ValueOf(cfg).Elem()
+	t := v.Type()
+
+	// Create a map of field names to field values for efficient lookup
+	fieldMap := make(map[string]reflect.Value)
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		tomlTag := field.Tag.Get("toml")
+		if tomlTag != "" {
+			fieldMap[tomlTag] = v.Field(i)
+		}
+	}
+
+	for key, value := range overrides {
+		fieldValue, exists := fieldMap[key]
+		if !exists {
+			return fmt.Errorf("unknown config key: %s", key)
+		}
+
+		if err := setFieldValue(fieldValue, value); err != nil {
+			return fmt.Errorf("failed to set %s: %w", key, err)
+		}
+	}
+
+	return nil
+}
+
+// setFieldValue sets a reflect.Value with proper type conversion
+func setFieldValue(field reflect.Value, value any) error {
+	switch field.Kind() {
+	case reflect.String:
+		strVal, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("expected string, got %T", value)
+		}
+		field.SetString(strVal)
+
+	case reflect.Int64:
+		switch v := value.(type) {
+		case int64:
+			field.SetInt(v)
+		case int:
+			field.SetInt(int64(v))
+		default:
+			return fmt.Errorf("expected int64, got %T", value)
+		}
+
+	case reflect.Float64:
+		floatVal, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("expected float64, got %T", value)
+		}
+		field.SetFloat(floatVal)
+
+	case reflect.Bool:
+		boolVal, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("expected bool, got %T", value)
+		}
+		field.SetBool(boolVal)
+
+	default:
+		return fmt.Errorf("unsupported field type: %v", field.Kind())
+	}
+
+	return nil
+}
+
+// validate performs validation on the configuration
+func (c *Config) validate() error {
+	// String validations
+	if strings.TrimSpace(c.Name) == "" {
+		return fmtErrorf("log name cannot be empty")
+	}
+
+	if c.Format != "txt" && c.Format != "json" && c.Format != "raw" {
+		return fmtErrorf("invalid format: '%s' (use txt, json, or raw)", c.Format)
+	}
+
+	if strings.HasPrefix(c.Extension, ".") {
+		return fmtErrorf("extension should not start with dot: %s", c.Extension)
+	}
+
+	if strings.TrimSpace(c.TimestampFormat) == "" {
+		return fmtErrorf("timestamp_format cannot be empty")
+	}
+
+	if c.StdoutTarget != "stdout" && c.StdoutTarget != "stderr" {
+		return fmtErrorf("invalid stdout_target: '%s' (use stdout or stderr)", c.StdoutTarget)
+	}
+
+	// Numeric validations
+	if c.BufferSize <= 0 {
+		return fmtErrorf("buffer_size must be positive: %d", c.BufferSize)
+	}
+
+	if c.MaxSizeMB < 0 || c.MaxTotalSizeMB < 0 || c.MinDiskFreeMB < 0 {
+		return fmtErrorf("size limits cannot be negative")
+	}
+
+	if c.FlushIntervalMs <= 0 || c.DiskCheckIntervalMs <= 0 ||
+		c.MinCheckIntervalMs <= 0 || c.MaxCheckIntervalMs <= 0 {
+		return fmtErrorf("interval settings must be positive")
+	}
+
+	if c.TraceDepth < 0 || c.TraceDepth > 10 {
+		return fmtErrorf("trace_depth must be between 0 and 10: %d", c.TraceDepth)
+	}
+
+	if c.RetentionPeriodHrs < 0 || c.RetentionCheckMins < 0 {
+		return fmtErrorf("retention settings cannot be negative")
+	}
+
+	if c.HeartbeatLevel < 0 || c.HeartbeatLevel > 3 {
+		return fmtErrorf("heartbeat_level must be between 0 and 3: %d", c.HeartbeatLevel)
 	}
 
 	// Cross-field validations
@@ -147,4 +319,10 @@ func (c *Config) validate() error {
 	}
 
 	return nil
+}
+
+// Clone creates a deep copy of the configuration
+func (c *Config) Clone() *Config {
+	copiedConfig := *c
+	return &copiedConfig
 }

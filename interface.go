@@ -44,29 +44,29 @@ type logRecord struct {
 // Debug logs a message at debug level.
 func (l *Logger) Debug(args ...any) {
 	flags := l.getFlags()
-	traceDepth, _ := l.config.Int64("log.trace_depth")
-	l.log(flags, LevelDebug, traceDepth, args...)
+	cfg := l.getConfig()
+	l.log(flags, LevelDebug, cfg.TraceDepth, args...)
 }
 
 // Info logs a message at info level.
 func (l *Logger) Info(args ...any) {
 	flags := l.getFlags()
-	traceDepth, _ := l.config.Int64("log.trace_depth")
-	l.log(flags, LevelInfo, traceDepth, args...)
+	cfg := l.getConfig()
+	l.log(flags, LevelInfo, cfg.TraceDepth, args...)
 }
 
 // Warn logs a message at warning level.
 func (l *Logger) Warn(args ...any) {
 	flags := l.getFlags()
-	traceDepth, _ := l.config.Int64("log.trace_depth")
-	l.log(flags, LevelWarn, traceDepth, args...)
+	cfg := l.getConfig()
+	l.log(flags, LevelWarn, cfg.TraceDepth, args...)
 }
 
 // Error logs a message at error level.
 func (l *Logger) Error(args ...any) {
 	flags := l.getFlags()
-	traceDepth, _ := l.config.Int64("log.trace_depth")
-	l.log(flags, LevelError, traceDepth, args...)
+	cfg := l.getConfig()
+	l.log(flags, LevelError, cfg.TraceDepth, args...)
 }
 
 // DebugTrace logs a debug message with function call trace.

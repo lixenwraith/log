@@ -13,8 +13,9 @@ import (
 
 // performSync syncs the current log file
 func (l *Logger) performSync() {
+	c := l.getConfig()
 	// Skip sync if file output is disabled
-	disableFile, _ := l.config.Bool("log.disable_file")
+	disableFile := c.DisableFile
 	if disableFile {
 		return
 	}
@@ -39,8 +40,9 @@ func (l *Logger) performSync() {
 // performDiskCheck checks disk space, triggers cleanup if needed, and updates status
 // Returns true if disk is OK, false otherwise
 func (l *Logger) performDiskCheck(forceCleanup bool) bool {
+	c := l.getConfig()
 	// Skip all disk checks if file output is disabled
-	disableFile, _ := l.config.Bool("log.disable_file")
+	disableFile := c.DisableFile
 	if disableFile {
 		// Always return OK status when file output is disabled
 		if !l.state.DiskStatusOK.Load() {
@@ -50,10 +52,10 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 		return true
 	}
 
-	dir, _ := l.config.String("log.directory")
-	ext, _ := l.config.String("log.extension")
-	maxTotalMB, _ := l.config.Int64("log.max_total_size_mb")
-	minDiskFreeMB, _ := l.config.Int64("log.min_disk_free_mb")
+	dir := c.Directory
+	ext := c.Extension
+	maxTotalMB := c.MaxTotalSizeMB
+	minDiskFreeMB := c.MinDiskFreeMB
 	maxTotal := maxTotalMB * 1024 * 1024
 	minFreeRequired := minDiskFreeMB * 1024 * 1024
 
@@ -156,7 +158,7 @@ func (l *Logger) getDiskFreeSpace(path string) (int64, error) {
 }
 
 // getLogDirSize calculates total size of log files matching the current extension
-func (l *Logger) getLogDirSize(dir, fileExt string) (int64, error) {
+func (l *Logger) getLogDirSize(dir, ext string) (int64, error) {
 	var size int64
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -166,7 +168,7 @@ func (l *Logger) getLogDirSize(dir, fileExt string) (int64, error) {
 		return 0, fmtErrorf("failed to read log directory '%s': %w", dir, err)
 	}
 
-	targetExt := "." + fileExt
+	targetExt := "." + ext
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -184,9 +186,10 @@ func (l *Logger) getLogDirSize(dir, fileExt string) (int64, error) {
 
 // cleanOldLogs removes oldest log files until required space is freed
 func (l *Logger) cleanOldLogs(required int64) error {
-	dir, _ := l.config.String("log.directory")
-	fileExt, _ := l.config.String("log.extension")
-	name, _ := l.config.String("log.name")
+	c := l.getConfig()
+	dir := c.Directory
+	ext := c.Extension
+	name := c.Name
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -195,8 +198,8 @@ func (l *Logger) cleanOldLogs(required int64) error {
 
 	// Get the static log filename to exclude from deletion
 	staticLogName := name
-	if fileExt != "" {
-		staticLogName = name + "." + fileExt
+	if ext != "" {
+		staticLogName = name + "." + ext
 	}
 
 	type logFileMeta struct {
@@ -205,12 +208,12 @@ func (l *Logger) cleanOldLogs(required int64) error {
 		size    int64
 	}
 	var logs []logFileMeta
-	targetExt := "." + fileExt
+	targetExt := "." + ext
 	for _, entry := range entries {
 		if entry.IsDir() || entry.Name() == staticLogName {
 			continue
 		}
-		if fileExt != "" && filepath.Ext(entry.Name()) != targetExt {
+		if ext != "" && filepath.Ext(entry.Name()) != targetExt {
 			continue
 		}
 		info, errInfo := entry.Info()
@@ -251,9 +254,10 @@ func (l *Logger) cleanOldLogs(required int64) error {
 
 // updateEarliestFileTime scans the log directory for the oldest log file
 func (l *Logger) updateEarliestFileTime() {
-	dir, _ := l.config.String("log.directory")
-	fileExt, _ := l.config.String("log.extension")
-	name, _ := l.config.String("log.name")
+	c := l.getConfig()
+	dir := c.Directory
+	ext := c.Extension
+	name := c.Name
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -264,11 +268,11 @@ func (l *Logger) updateEarliestFileTime() {
 	var earliest time.Time
 	// Get the active log filename to exclude from timestamp tracking
 	staticLogName := name
-	if fileExt != "" {
-		staticLogName = name + "." + fileExt
+	if ext != "" {
+		staticLogName = name + "." + ext
 	}
 
-	targetExt := "." + fileExt
+	targetExt := "." + ext
 	prefix := name + "_"
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -279,7 +283,7 @@ func (l *Logger) updateEarliestFileTime() {
 		if fname == staticLogName {
 			continue
 		}
-		if !strings.HasPrefix(fname, prefix) || (fileExt != "" && filepath.Ext(fname) != targetExt) {
+		if !strings.HasPrefix(fname, prefix) || (ext != "" && filepath.Ext(fname) != targetExt) {
 			continue
 		}
 		info, errInfo := entry.Info()
@@ -295,10 +299,11 @@ func (l *Logger) updateEarliestFileTime() {
 
 // cleanExpiredLogs removes log files older than the retention period
 func (l *Logger) cleanExpiredLogs(oldest time.Time) error {
-	dir, _ := l.config.String("log.directory")
-	fileExt, _ := l.config.String("log.extension")
-	name, _ := l.config.String("log.name")
-	retentionPeriodHrs, _ := l.config.Float64("log.retention_period_hrs")
+	c := l.getConfig()
+	dir := c.Directory
+	ext := c.Extension
+	name := c.Name
+	retentionPeriodHrs := c.RetentionPeriodHrs
 	rpDuration := time.Duration(retentionPeriodHrs * float64(time.Hour))
 
 	if rpDuration <= 0 {
@@ -316,18 +321,18 @@ func (l *Logger) cleanExpiredLogs(oldest time.Time) error {
 
 	// Get the active log filename to exclude from deletion
 	staticLogName := name
-	if fileExt != "" {
-		staticLogName = name + "." + fileExt
+	if ext != "" {
+		staticLogName = name + "." + ext
 	}
 
-	targetExt := "." + fileExt
+	targetExt := "." + ext
 	var deletedCount int
 	for _, entry := range entries {
 		if entry.IsDir() || entry.Name() == staticLogName {
 			continue
 		}
 		// Only consider files with correct extension
-		if fileExt != "" && filepath.Ext(entry.Name()) != targetExt {
+		if ext != "" && filepath.Ext(entry.Name()) != targetExt {
 			continue
 		}
 		info, errInfo := entry.Info()
@@ -345,17 +350,15 @@ func (l *Logger) cleanExpiredLogs(oldest time.Time) error {
 		}
 	}
 
-	if deletedCount == 0 && err != nil {
-		return err
-	}
 	return nil
 }
 
 // getStaticLogFilePath returns the full path to the active log file
 func (l *Logger) getStaticLogFilePath() string {
-	dir, _ := l.config.String("log.directory")
-	name, _ := l.config.String("log.name")
-	ext, _ := l.config.String("log.extension")
+	c := l.getConfig()
+	dir := c.Directory
+	ext := c.Extension
+	name := c.Name
 
 	// Handle extension with or without dot
 	filename := name
@@ -368,8 +371,10 @@ func (l *Logger) getStaticLogFilePath() string {
 
 // generateArchiveLogFileName creates a timestamped filename for archived logs during rotation
 func (l *Logger) generateArchiveLogFileName(timestamp time.Time) string {
-	name, _ := l.config.String("log.name")
-	ext, _ := l.config.String("log.extension")
+	c := l.getConfig()
+	ext := c.Extension
+	name := c.Name
+
 	tsFormat := timestamp.Format("060102_150405")
 	nano := timestamp.Nanosecond()
 
@@ -393,6 +398,8 @@ func (l *Logger) createNewLogFile() (*os.File, error) {
 // rotateLogFile implements the rename-on-rotate strategy
 // Closes current file, renames it with timestamp, creates new static file
 func (l *Logger) rotateLogFile() error {
+	c := l.getConfig()
+
 	// Get current file handle
 	cfPtr := l.state.CurrentFile.Load()
 	if cfPtr == nil {
@@ -427,7 +434,7 @@ func (l *Logger) rotateLogFile() error {
 	}
 
 	// Generate archive filename with current timestamp
-	dir, _ := l.config.String("log.directory")
+	dir := c.Directory
 	archiveName := l.generateArchiveLogFileName(time.Now())
 	archivePath := filepath.Join(dir, archiveName)
 
@@ -459,7 +466,7 @@ func (l *Logger) rotateLogFile() error {
 }
 
 // getLogFileCount calculates the number of log files matching the current extension
-func (l *Logger) getLogFileCount(dir, fileExt string) (int, error) {
+func (l *Logger) getLogFileCount(dir, ext string) (int, error) {
 	count := 0
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -469,7 +476,7 @@ func (l *Logger) getLogFileCount(dir, fileExt string) (int, error) {
 		return -1, fmtErrorf("failed to read log directory '%s': %w", dir, err)
 	}
 
-	targetExt := "." + fileExt
+	targetExt := "." + ext
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue

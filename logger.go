@@ -2,12 +2,12 @@
 package log
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lixenwraith/config"
@@ -15,21 +15,20 @@ import (
 
 // Logger is the core struct that encapsulates all logger functionality
 type Logger struct {
-	config     *config.Config
-	state      State
-	initMu     sync.Mutex
-	serializer *serializer
+	currentConfig atomic.Value // stores *Config
+	state         State
+	initMu        sync.Mutex
+	serializer    *serializer
 }
 
 // NewLogger creates a new Logger instance with default settings
 func NewLogger() *Logger {
 	l := &Logger{
-		config:     config.New(),
 		serializer: newSerializer(),
 	}
 
-	// Register all configuration parameters with their defaults
-	l.registerConfigValues()
+	// Set default configuration
+	l.currentConfig.Store(DefaultConfig())
 
 	// Initialize the state
 	l.state.IsInitialized.Store(false)
@@ -58,130 +57,57 @@ func NewLogger() *Logger {
 	return l
 }
 
-// LoadConfig loads logger configuration from a file with optional CLI overrides
-func (l *Logger) LoadConfig(path string, args []string) error {
-	err := l.config.Load(path, args)
+// getConfig returns the current configuration (thread-safe)
+func (l *Logger) getConfig() *Config {
+	return l.currentConfig.Load().(*Config)
+}
 
-	// Check if the error indicates that the file was not found
-	configExists := !errors.Is(err, config.ErrConfigNotFound)
-
-	// If there's an error other than "file not found", return it
-	if err != nil && !errors.Is(err, config.ErrConfigNotFound) {
+// LoadConfig loads logger configuration from a file
+func (l *Logger) LoadConfig(path string) error {
+	cfg, err := NewConfigFromFile(path)
+	if err != nil {
 		return err
-	}
-
-	// If no config file exists and no CLI args were provided, there's nothing to apply
-	if !configExists && len(args) == 0 {
-		return nil
 	}
 
 	l.initMu.Lock()
 	defer l.initMu.Unlock()
-	return l.applyConfig()
+
+	return l.apply(cfg)
 }
 
 // SaveConfig saves the current logger configuration to a file
 func (l *Logger) SaveConfig(path string) error {
-	return l.config.Save(path)
-}
+	// Create a lixenwraith/config instance for saving
+	saver := config.New()
+	cfg := l.getConfig()
 
-// registerConfigValues registers all configuration parameters with the config instance
-func (l *Logger) registerConfigValues() {
-	// Register the entire config struct at once
-	err := l.config.RegisterStruct("log.", defaultConfig)
-	if err != nil {
-		l.internalLog("warning - failed to register config values: %v\n", err)
-	}
-}
-
-// updateConfigFromExternal updates the logger config from an external config.Config instance
-func (l *Logger) updateConfigFromExternal(extCfg *config.Config, basePath string) error {
-	// Get our registered config paths (already registered during initialization)
-	registeredPaths := l.config.GetRegisteredPaths("log.")
-	if len(registeredPaths) == 0 {
-		// Register defaults first if not already done
-		l.registerConfigValues()
-		registeredPaths = l.config.GetRegisteredPaths("log.")
+	// Register all fields with their current values
+	if err := saver.RegisterStruct("log.", *cfg); err != nil {
+		return fmt.Errorf("failed to register config for saving: %w", err)
 	}
 
-	// For each registered path
-	for path := range registeredPaths {
-		// Extract local name and build external path
-		localName := strings.TrimPrefix(path, "log.")
-		fullPath := basePath + "." + localName
-		if basePath == "" {
-			fullPath = localName
-		}
-
-		// Get current value to use as default in external config
-		currentVal, found := l.config.Get(path)
-		if !found {
-			continue // Skip if not found (shouldn't happen)
-		}
-
-		// Register in external config with current value as default
-		err := extCfg.Register(fullPath, currentVal)
-		if err != nil {
-			return fmtErrorf("failed to register config key '%s': %w", fullPath, err)
-		}
-
-		// Get value from external config
-		val, found := extCfg.Get(fullPath)
-		if !found {
-			continue // Use existing value if not found in external config
-		}
-
-		// Validate and update
-		if err := validateConfigValue(localName, val); err != nil {
-			return fmtErrorf("invalid value for '%s': %w", localName, err)
-		}
-
-		if err := l.config.Set(path, val); err != nil {
-			return fmtErrorf("failed to update config value for '%s': %w", path, err)
-		}
-	}
-	return nil
+	return saver.Save(path)
 }
 
-// applyConfig applies the configuration and reconfigures logger components
+// apply applies a validated configuration and reconfigures logger components
 // Assumes initMu is held
-func (l *Logger) applyConfig() error {
-	// Check parameter relationship issues
-	minInterval, _ := l.config.Int64("log.min_check_interval_ms")
-	maxInterval, _ := l.config.Int64("log.max_check_interval_ms")
-	if minInterval > maxInterval {
-		l.internalLog("warning - min_check_interval_ms (%d) > max_check_interval_ms (%d), max will be used\n",
-			minInterval, maxInterval)
+func (l *Logger) apply(cfg *Config) error {
+	// Store the new configuration
+	oldCfg := l.getConfig()
+	l.currentConfig.Store(cfg)
 
-		// Update min_check_interval_ms to equal max_check_interval_ms
-		err := l.config.Set("log.min_check_interval_ms", maxInterval)
-		if err != nil {
-			l.internalLog("warning - failed to update min_check_interval_ms: %v\n", err)
-		}
-	}
-
-	// Validate config (Basic)
-	currentCfg := l.loadCurrentConfig() // Helper to load struct from l.config
-	if err := currentCfg.validate(); err != nil {
-		l.state.LoggerDisabled.Store(true) // Disable logger on validation failure
-		return fmtErrorf("invalid configuration detected: %w", err)
-	}
+	// Update serializer format
+	l.serializer.setTimestampFormat(cfg.TimestampFormat)
 
 	// Ensure log directory exists
-	dir, _ := l.config.String("log.directory")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(cfg.Directory, 0755); err != nil {
 		l.state.LoggerDisabled.Store(true)
-		return fmtErrorf("failed to create log directory '%s': %w", dir, err)
-	}
-
-	// Update serializer format when config changes
-	if tsFormat, err := l.config.String("log.timestamp_format"); err == nil && tsFormat != "" {
-		l.serializer.setTimestampFormat(tsFormat)
+		l.currentConfig.Store(oldCfg) // Rollback
+		return fmtErrorf("failed to create log directory '%s': %w", cfg.Directory, err)
 	}
 
 	// Get current state
 	wasInitialized := l.state.IsInitialized.Load()
-	disableFile, _ := l.config.Bool("log.disable_file")
 
 	// Get current file handle
 	currentFilePtr := l.state.CurrentFile.Load()
@@ -194,8 +120,8 @@ func (l *Logger) applyConfig() error {
 	needsNewFile := !wasInitialized || currentFile == nil
 
 	// Handle file state transitions
-	if disableFile {
-		// When disabling file output, properly close the current file
+	if cfg.DisableFile {
+		// When disabling file output, close the current file
 		if currentFile != nil {
 			// Sync and close the file
 			_ = currentFile.Sync()
@@ -210,6 +136,7 @@ func (l *Logger) applyConfig() error {
 		logFile, err := l.createNewLogFile()
 		if err != nil {
 			l.state.LoggerDisabled.Store(true)
+			l.currentConfig.Store(oldCfg) // Rollback
 			return fmtErrorf("failed to create log file: %w", err)
 		}
 
@@ -233,8 +160,7 @@ func (l *Logger) applyConfig() error {
 		oldCh := l.getCurrentLogChannel()
 		if oldCh != nil {
 			// Create new channel then close old channel
-			bufferSize, _ := l.config.Int64("log.buffer_size")
-			newLogChannel := make(chan logRecord, bufferSize)
+			newLogChannel := make(chan logRecord, cfg.BufferSize)
 			l.state.ActiveLogChannel.Store(newLogChannel)
 			close(oldCh)
 
@@ -244,27 +170,23 @@ func (l *Logger) applyConfig() error {
 		}
 	} else {
 		// Initial startup
-		bufferSize, _ := l.config.Int64("log.buffer_size")
-		newLogChannel := make(chan logRecord, bufferSize)
+		newLogChannel := make(chan logRecord, cfg.BufferSize)
 		l.state.ActiveLogChannel.Store(newLogChannel)
 		l.state.ProcessorExited.Store(false)
 		go l.processLogs(newLogChannel)
 	}
 
 	// Setup stdout writer based on config
-	enableStdout, _ := l.config.Bool("log.enable_stdout")
-	if enableStdout {
-		target, _ := l.config.String("log.stdout_target")
-		if target == "stderr" {
-			var writer io.Writer = os.Stderr
-			l.state.StdoutWriter.Store(&sink{w: writer})
-		} else if target == "stdout" {
-			var writer io.Writer = os.Stdout
-			l.state.StdoutWriter.Store(&sink{w: writer})
+	if cfg.EnableStdout {
+		var writer io.Writer
+		if cfg.StdoutTarget == "stderr" {
+			writer = os.Stderr
+		} else {
+			writer = os.Stdout
 		}
-	} else {
-		var writer io.Writer = io.Discard
 		l.state.StdoutWriter.Store(&sink{w: writer})
+	} else {
+		l.state.StdoutWriter.Store(&sink{w: io.Discard})
 	}
 
 	// Mark as initialized
@@ -276,38 +198,6 @@ func (l *Logger) applyConfig() error {
 	return nil
 }
 
-// loadCurrentConfig loads the current configuration for validation
-func (l *Logger) loadCurrentConfig() *Config {
-	cfg := &Config{}
-	cfg.Level, _ = l.config.Int64("log.level")
-	cfg.Name, _ = l.config.String("log.name")
-	cfg.Directory, _ = l.config.String("log.directory")
-	cfg.Format, _ = l.config.String("log.format")
-	cfg.Extension, _ = l.config.String("log.extension")
-	cfg.ShowTimestamp, _ = l.config.Bool("log.show_timestamp")
-	cfg.ShowLevel, _ = l.config.Bool("log.show_level")
-	cfg.TimestampFormat, _ = l.config.String("log.timestamp_format")
-	cfg.BufferSize, _ = l.config.Int64("log.buffer_size")
-	cfg.MaxSizeMB, _ = l.config.Int64("log.max_size_mb")
-	cfg.MaxTotalSizeMB, _ = l.config.Int64("log.max_total_size_mb")
-	cfg.MinDiskFreeMB, _ = l.config.Int64("log.min_disk_free_mb")
-	cfg.FlushIntervalMs, _ = l.config.Int64("log.flush_interval_ms")
-	cfg.TraceDepth, _ = l.config.Int64("log.trace_depth")
-	cfg.RetentionPeriodHrs, _ = l.config.Float64("log.retention_period_hrs")
-	cfg.RetentionCheckMins, _ = l.config.Float64("log.retention_check_mins")
-	cfg.DiskCheckIntervalMs, _ = l.config.Int64("log.disk_check_interval_ms")
-	cfg.EnableAdaptiveInterval, _ = l.config.Bool("log.enable_adaptive_interval")
-	cfg.MinCheckIntervalMs, _ = l.config.Int64("log.min_check_interval_ms")
-	cfg.MaxCheckIntervalMs, _ = l.config.Int64("log.max_check_interval_ms")
-	cfg.EnablePeriodicSync, _ = l.config.Bool("log.enable_periodic_sync")
-	cfg.HeartbeatLevel, _ = l.config.Int64("log.heartbeat_level")
-	cfg.HeartbeatIntervalS, _ = l.config.Int64("log.heartbeat_interval_s")
-	cfg.EnableStdout, _ = l.config.Bool("log.enable_stdout")
-	cfg.StdoutTarget, _ = l.config.String("log.stdout_target")
-	cfg.DisableFile, _ = l.config.Bool("log.disable_file")
-	return cfg
-}
-
 // getCurrentLogChannel safely retrieves the current log channel
 func (l *Logger) getCurrentLogChannel() chan logRecord {
 	chVal := l.state.ActiveLogChannel.Load()
@@ -317,13 +207,12 @@ func (l *Logger) getCurrentLogChannel() chan logRecord {
 // getFlags from config
 func (l *Logger) getFlags() int64 {
 	var flags int64 = 0
-	showLevel, _ := l.config.Bool("log.show_level")
-	showTimestamp, _ := l.config.Bool("log.show_timestamp")
+	cfg := l.getConfig()
 
-	if showLevel {
+	if cfg.ShowLevel {
 		flags |= FlagShowLevel
 	}
-	if showTimestamp {
+	if cfg.ShowTimestamp {
 		flags |= FlagShowTimestamp
 	}
 	return flags
@@ -335,8 +224,8 @@ func (l *Logger) log(flags int64, level int64, depth int64, args ...any) {
 		return
 	}
 
-	configLevel, _ := l.config.Int64("log.level")
-	if level < configLevel {
+	cfg := l.getConfig()
+	if level < cfg.Level {
 		return
 	}
 
@@ -411,11 +300,10 @@ func (l *Logger) handleFailedSend(record logRecord) {
 }
 
 // internalLog handles writing internal logger diagnostics to stderr, if enabled.
-// This centralizes all internal error reporting and makes it configurable.
 func (l *Logger) internalLog(format string, args ...any) {
 	// Check if internal error reporting is enabled
-	enabled, _ := l.config.Bool("log.internal_errors_to_stderr")
-	if !enabled {
+	cfg := l.getConfig()
+	if !cfg.InternalErrorsToStderr {
 		return
 	}
 
