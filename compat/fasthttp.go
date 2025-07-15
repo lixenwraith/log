@@ -48,7 +48,7 @@ func WithLevelDetector(detector func(string) int64) FastHTTPOption {
 }
 
 // Printf implements fasthttp's Logger interface
-func (a *FastHTTPAdapter) Printf(format string, args ...interface{}) {
+func (a *FastHTTPAdapter) Printf(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 
 	// Detect log level from message content

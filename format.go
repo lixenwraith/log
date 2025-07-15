@@ -4,8 +4,8 @@ package log
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -41,7 +41,12 @@ func (s *serializer) serialize(format string, flags int64, timestamp time.Time, 
 		return s.serializeRaw(args)
 	}
 
-	// 2. Handle the instance-wide configuration setting
+	// 2. Check for structured JSON flag
+	if flags&FlagStructuredJSON != 0 && format == "json" {
+		return s.serializeStructuredJSON(flags, timestamp, level, trace, args)
+	}
+
+	// 3. Handle the instance-wide configuration setting
 	if format == "raw" {
 		return s.serializeRaw(args)
 	}
@@ -119,86 +124,6 @@ func (s *serializer) writeRawValue(v any) {
 
 		// Trim trailing new line added by spew
 		s.buf = append(s.buf, bytes.TrimSpace(b.Bytes())...)
-	}
-}
-
-// This is the safe, dependency-free replacement for fmt.Sprintf.
-func (s *serializer) reflectValue(v reflect.Value) {
-	// Safely handle invalid, nil pointer, or nil interface values.
-	if !v.IsValid() {
-		s.buf = append(s.buf, "nil"...)
-		return
-	}
-	// Dereference pointers and interfaces to get the concrete value.
-	// Recurse to handle multiple levels of pointers.
-	kind := v.Kind()
-	if kind == reflect.Ptr || kind == reflect.Interface {
-		if v.IsNil() {
-			s.buf = append(s.buf, "nil"...)
-			return
-		}
-		s.reflectValue(v.Elem())
-		return
-	}
-
-	switch kind {
-	case reflect.String:
-		s.buf = append(s.buf, v.String()...)
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		s.buf = strconv.AppendInt(s.buf, v.Int(), 10)
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		s.buf = strconv.AppendUint(s.buf, v.Uint(), 10)
-	case reflect.Float32, reflect.Float64:
-		s.buf = strconv.AppendFloat(s.buf, v.Float(), 'f', -1, 64)
-	case reflect.Bool:
-		s.buf = strconv.AppendBool(s.buf, v.Bool())
-
-	case reflect.Slice, reflect.Array:
-		// Check if it's a byte slice ([]uint8) and hex-encode it for safety.
-		if v.Type().Elem().Kind() == reflect.Uint8 {
-			s.buf = append(s.buf, "0x"...)
-			s.buf = hex.AppendEncode(s.buf, v.Bytes())
-			return
-		}
-		s.buf = append(s.buf, '[')
-		for i := 0; i < v.Len(); i++ {
-			if i > 0 {
-				s.buf = append(s.buf, ' ')
-			}
-			s.reflectValue(v.Index(i))
-		}
-		s.buf = append(s.buf, ']')
-
-	case reflect.Struct:
-		s.buf = append(s.buf, '{')
-		for i := 0; i < v.NumField(); i++ {
-			if !v.Type().Field(i).IsExported() {
-				continue // Skip unexported fields
-			}
-			if i > 0 {
-				s.buf = append(s.buf, ' ')
-			}
-			s.buf = append(s.buf, v.Type().Field(i).Name...)
-			s.buf = append(s.buf, ':')
-			s.reflectValue(v.Field(i))
-		}
-		s.buf = append(s.buf, '}')
-
-	case reflect.Map:
-		s.buf = append(s.buf, '{')
-		for i, key := range v.MapKeys() {
-			if i > 0 {
-				s.buf = append(s.buf, ' ')
-			}
-			s.reflectValue(key)
-			s.buf = append(s.buf, ':')
-			s.reflectValue(v.MapIndex(key))
-		}
-		s.buf = append(s.buf, '}')
-
-	default:
-		// As a final fallback, use fmt, but this should rarely be hit.
-		s.buf = append(s.buf, fmt.Sprint(v.Interface())...)
 	}
 }
 
@@ -388,6 +313,91 @@ func (s *serializer) writeJSONValue(v any) {
 		s.writeString(fmt.Sprintf("%+v", val))
 		s.buf = append(s.buf, '"')
 	}
+}
+
+// serializeStructuredJSON formats log entries as structured JSON with proper field marshaling
+func (s *serializer) serializeStructuredJSON(flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
+	// Validate args structure
+	if len(args) < 2 {
+		// Fallback to regular JSON if args are malformed
+		return s.serializeJSON(flags, timestamp, level, trace, args)
+	}
+
+	message, ok := args[0].(string)
+	if !ok {
+		// Fallback if message is not a string
+		return s.serializeJSON(flags, timestamp, level, trace, args)
+	}
+
+	fields, ok := args[1].(map[string]any)
+	if !ok {
+		// Fallback if fields is not a map
+		return s.serializeJSON(flags, timestamp, level, trace, args)
+	}
+
+	s.buf = append(s.buf, '{')
+	needsComma := false
+
+	// Add timestamp
+	if flags&FlagShowTimestamp != 0 {
+		s.buf = append(s.buf, `"time":"`...)
+		s.buf = timestamp.AppendFormat(s.buf, s.timestampFormat)
+		s.buf = append(s.buf, '"')
+		needsComma = true
+	}
+
+	// Add level
+	if flags&FlagShowLevel != 0 {
+		if needsComma {
+			s.buf = append(s.buf, ',')
+		}
+		s.buf = append(s.buf, `"level":"`...)
+		s.buf = append(s.buf, levelToString(level)...)
+		s.buf = append(s.buf, '"')
+		needsComma = true
+	}
+
+	// Add message
+	if needsComma {
+		s.buf = append(s.buf, ',')
+	}
+	s.buf = append(s.buf, `"message":"`...)
+	s.writeString(message)
+	s.buf = append(s.buf, '"')
+	needsComma = true
+
+	// // Add trace if present
+	// if trace != "" {
+	// 	if needsComma {
+	// 		s.buf = append(s.buf, ',')
+	// 	}
+	// 	s.buf = append(s.buf, `"trace":"`...)
+	// 	s.writeString(trace)
+	// 	s.buf = append(s.buf, '"')
+	// 	needsComma = true
+	// }
+
+	// Marshal fields using encoding/json
+	if len(fields) > 0 {
+		if needsComma {
+			s.buf = append(s.buf, ',')
+		}
+		s.buf = append(s.buf, `"fields":`...)
+
+		// Use json.Marshal for proper encoding
+		marshaledFields, err := json.Marshal(fields)
+		if err != nil {
+			// SECURITY: Log marshaling error as a string to prevent log injection
+			s.buf = append(s.buf, `{"_marshal_error":"`...)
+			s.writeString(err.Error())
+			s.buf = append(s.buf, `"}`...)
+		} else {
+			s.buf = append(s.buf, marshaledFields...)
+		}
+	}
+
+	s.buf = append(s.buf, '}', '\n')
+	return s.buf
 }
 
 // Update the levelToString function to include the new heartbeat levels

@@ -77,7 +77,7 @@ func (l *Logger) LoadConfig(path string, args []string) error {
 
 	l.initMu.Lock()
 	defer l.initMu.Unlock()
-	return l.applyAndReconfigureLocked()
+	return l.applyConfig()
 }
 
 // SaveConfig saves the current logger configuration to a file
@@ -143,9 +143,9 @@ func (l *Logger) updateConfigFromExternal(extCfg *config.Config, basePath string
 	return nil
 }
 
-// applyAndReconfigureLocked applies the configuration and reconfigures logger components
+// applyConfig applies the configuration and reconfigures logger components
 // Assumes initMu is held
-func (l *Logger) applyAndReconfigureLocked() error {
+func (l *Logger) applyConfig() error {
 	// Check parameter relationship issues
 	minInterval, _ := l.config.Int64("log.min_check_interval_ms")
 	maxInterval, _ := l.config.Int64("log.max_check_interval_ms")
@@ -331,7 +331,7 @@ func (l *Logger) getFlags() int64 {
 
 // log handles the core logging logic
 func (l *Logger) log(flags int64, level int64, depth int64, args ...any) {
-	if l.state.LoggerDisabled.Load() || !l.state.IsInitialized.Load() {
+	if !l.state.IsInitialized.Load() {
 		return
 	}
 

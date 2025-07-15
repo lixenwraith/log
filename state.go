@@ -64,7 +64,7 @@ func (l *Logger) Init(cfg *config.Config, basePath string) error {
 		return err
 	}
 
-	return l.applyAndReconfigureLocked()
+	return l.applyConfig()
 }
 
 // InitWithDefaults initializes the logger with built-in defaults and optional overrides
@@ -94,7 +94,7 @@ func (l *Logger) InitWithDefaults(overrides ...string) error {
 			return fmtErrorf("failed to get current value for '%s'", key)
 		}
 
-		var parsedValue interface{}
+		var parsedValue any
 		var parseErr error
 
 		switch currentVal.(type) {
@@ -124,7 +124,7 @@ func (l *Logger) InitWithDefaults(overrides ...string) error {
 		}
 	}
 
-	return l.applyAndReconfigureLocked()
+	return l.applyConfig()
 }
 
 // Shutdown gracefully closes the logger, attempting to flush pending records

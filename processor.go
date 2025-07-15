@@ -462,59 +462,22 @@ func (l *Logger) logSysHeartbeat() {
 	l.writeHeartbeatRecord(LevelSys, sysArgs)
 }
 
-// writeHeartbeatRecord handles common logic for writing a heartbeat record
+// writeHeartbeatRecord creates and sends a heartbeat log record through the main processing channel
 func (l *Logger) writeHeartbeatRecord(level int64, args []any) {
 	if l.state.LoggerDisabled.Load() || l.state.ShutdownCalled.Load() {
 		return
 	}
 
-	// Serialize heartbeat data
-	format, _ := l.config.String("log.format")
-	hbData := l.serializer.serialize(format, FlagDefault|FlagShowLevel, time.Now(), level, "", args)
-
-	// Mirror to stdout if enabled
-	enableStdout, _ := l.config.Bool("log.enable_stdout")
-	if enableStdout {
-		if s := l.state.StdoutWriter.Load(); s != nil {
-			// Assert to concrete type: *sink
-			if sinkWrapper, ok := s.(*sink); ok && sinkWrapper != nil {
-				// Use the wrapped writer (sinkWrapper.w)
-				_, _ = sinkWrapper.w.Write(hbData)
-			}
-		}
+	// Create heartbeat record with appropriate flags
+	record := logRecord{
+		Flags:           FlagDefault | FlagShowLevel,
+		TimeStamp:       time.Now(),
+		Level:           level,
+		Trace:           "",
+		Args:            args,
+		unreportedDrops: 0,
 	}
 
-	disableFile, _ := l.config.Bool("log.disable_file")
-	if disableFile || !l.state.DiskStatusOK.Load() {
-		return
-	}
-
-	// Write to file
-	cfPtr := l.state.CurrentFile.Load()
-	if cfPtr == nil {
-		l.internalLog("error - current file handle is nil during heartbeat\n")
-		return
-	}
-
-	currentLogFile, isFile := cfPtr.(*os.File)
-	if !isFile || currentLogFile == nil {
-		l.internalLog("error - invalid file handle type during heartbeat\n")
-		return
-	}
-
-	n, err := currentLogFile.Write(hbData)
-	if err != nil {
-		l.internalLog("failed to write heartbeat: %v\n", err)
-		l.performDiskCheck(true) // Force disk check on write failure
-
-		// One retry after disk check
-		n, err = currentLogFile.Write(hbData)
-		if err != nil {
-			l.internalLog("failed to write heartbeat on retry: %v\n", err)
-		} else {
-			l.state.CurrentSize.Add(int64(n))
-		}
-	} else {
-		l.state.CurrentSize.Add(int64(n))
-	}
+	// Send through the main processing channel
+	l.sendLogRecord(record)
 }

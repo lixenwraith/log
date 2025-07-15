@@ -11,18 +11,18 @@ import (
 
 // parseFormat attempts to extract structured fields from printf-style format strings
 // This is useful for preserving structured logging semantics
-func parseFormat(format string, args []interface{}) []interface{} {
+func parseFormat(format string, args []any) []any {
 	// Pattern to detect common structured patterns like "key=%v" or "key: %v"
 	keyValuePattern := regexp.MustCompile(`(\w+)\s*[:=]\s*%[vsdqxXeEfFgGpbcU]`)
 
 	matches := keyValuePattern.FindAllStringSubmatchIndex(format, -1)
 	if len(matches) == 0 || len(matches) > len(args) {
 		// Fallback to simple message if pattern doesn't match
-		return []interface{}{"msg", fmt.Sprintf(format, args...)}
+		return []any{"msg", fmt.Sprintf(format, args...)}
 	}
 
 	// Build structured fields
-	fields := make([]interface{}, 0, len(matches)*2+2)
+	fields := make([]any, 0, len(matches)*2+2)
 	lastEnd := 0
 	argIndex := 0
 
@@ -91,7 +91,7 @@ func NewStructuredGnetAdapter(logger *log.Logger, opts ...GnetOption) *Structure
 }
 
 // Debugf logs with structured field extraction
-func (a *StructuredGnetAdapter) Debugf(format string, args ...interface{}) {
+func (a *StructuredGnetAdapter) Debugf(format string, args ...any) {
 	if a.extractFields {
 		fields := parseFormat(format, args)
 		a.logger.Debug(append(fields, "source", "gnet")...)
@@ -101,7 +101,7 @@ func (a *StructuredGnetAdapter) Debugf(format string, args ...interface{}) {
 }
 
 // Infof logs with structured field extraction
-func (a *StructuredGnetAdapter) Infof(format string, args ...interface{}) {
+func (a *StructuredGnetAdapter) Infof(format string, args ...any) {
 	if a.extractFields {
 		fields := parseFormat(format, args)
 		a.logger.Info(append(fields, "source", "gnet")...)
@@ -111,7 +111,7 @@ func (a *StructuredGnetAdapter) Infof(format string, args ...interface{}) {
 }
 
 // Warnf logs with structured field extraction
-func (a *StructuredGnetAdapter) Warnf(format string, args ...interface{}) {
+func (a *StructuredGnetAdapter) Warnf(format string, args ...any) {
 	if a.extractFields {
 		fields := parseFormat(format, args)
 		a.logger.Warn(append(fields, "source", "gnet")...)
@@ -121,7 +121,7 @@ func (a *StructuredGnetAdapter) Warnf(format string, args ...interface{}) {
 }
 
 // Errorf logs with structured field extraction
-func (a *StructuredGnetAdapter) Errorf(format string, args ...interface{}) {
+func (a *StructuredGnetAdapter) Errorf(format string, args ...any) {
 	if a.extractFields {
 		fields := parseFormat(format, args)
 		a.logger.Error(append(fields, "source", "gnet")...)

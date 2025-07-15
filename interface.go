@@ -22,10 +22,11 @@ const (
 
 // Record flags for controlling output structure
 const (
-	FlagShowTimestamp int64 = 0b001
-	FlagShowLevel     int64 = 0b010
-	FlagRaw           int64 = 0b100
-	FlagDefault             = FlagShowTimestamp | FlagShowLevel
+	FlagShowTimestamp  int64 = 0b0001
+	FlagShowLevel      int64 = 0b0010
+	FlagRaw            int64 = 0b0100
+	FlagStructuredJSON int64 = 0b1000
+	FlagDefault              = FlagShowTimestamp | FlagShowLevel
 )
 
 // logRecord represents a single log entry.
@@ -105,6 +106,11 @@ func (l *Logger) Message(args ...any) {
 // LogTrace writes a timestamp record with call trace but no level info.
 func (l *Logger) LogTrace(depth int, args ...any) {
 	l.log(FlagShowTimestamp, LevelInfo, int64(depth), args...)
+}
+
+// LogStructured logs a message with structured fields as proper JSON
+func (l *Logger) LogStructured(level int64, message string, fields map[string]any) {
+	l.log(l.getFlags()|FlagStructuredJSON, level, 0, []any{message, fields})
 }
 
 // Write outputs raw, unformatted data regardless of configured format.

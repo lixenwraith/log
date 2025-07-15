@@ -42,31 +42,31 @@ func WithFatalHandler(handler func(string)) GnetOption {
 }
 
 // Debugf logs at debug level with printf-style formatting
-func (a *GnetAdapter) Debugf(format string, args ...interface{}) {
+func (a *GnetAdapter) Debugf(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	a.logger.Debug("msg", msg, "source", "gnet")
 }
 
 // Infof logs at info level with printf-style formatting
-func (a *GnetAdapter) Infof(format string, args ...interface{}) {
+func (a *GnetAdapter) Infof(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	a.logger.Info("msg", msg, "source", "gnet")
 }
 
 // Warnf logs at warn level with printf-style formatting
-func (a *GnetAdapter) Warnf(format string, args ...interface{}) {
+func (a *GnetAdapter) Warnf(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	a.logger.Warn("msg", msg, "source", "gnet")
 }
 
 // Errorf logs at error level with printf-style formatting
-func (a *GnetAdapter) Errorf(format string, args ...interface{}) {
+func (a *GnetAdapter) Errorf(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	a.logger.Error("msg", msg, "source", "gnet")
 }
 
 // Fatalf logs at error level and triggers fatal handler
-func (a *GnetAdapter) Fatalf(format string, args ...interface{}) {
+func (a *GnetAdapter) Fatalf(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	a.logger.Error("msg", msg, "source", "gnet", "fatal", true)
 
