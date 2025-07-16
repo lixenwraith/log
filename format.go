@@ -364,24 +364,18 @@ func (s *serializer) serializeStructuredJSON(flags int64, timestamp time.Time, l
 	s.buf = append(s.buf, `"message":"`...)
 	s.writeString(message)
 	s.buf = append(s.buf, '"')
-	needsComma = true
 
-	// // Add trace if present
-	// if trace != "" {
-	// 	if needsComma {
-	// 		s.buf = append(s.buf, ',')
-	// 	}
-	// 	s.buf = append(s.buf, `"trace":"`...)
-	// 	s.writeString(trace)
-	// 	s.buf = append(s.buf, '"')
-	// 	needsComma = true
-	// }
+	// Add trace if present
+	if trace != "" {
+		s.buf = append(s.buf, ',')
+		s.buf = append(s.buf, `"trace":"`...)
+		s.writeString(trace)
+		s.buf = append(s.buf, '"')
+	}
 
 	// Marshal fields using encoding/json
 	if len(fields) > 0 {
-		if needsComma {
-			s.buf = append(s.buf, ',')
-		}
+		s.buf = append(s.buf, ',')
 		s.buf = append(s.buf, `"fields":`...)
 
 		// Use json.Marshal for proper encoding

@@ -2,12 +2,8 @@
 package log
 
 import (
-	"fmt"
 	"io"
 	"os"
-	"reflect"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,95 +40,6 @@ type State struct {
 // sink is a wrapper around an io.Writer, atomic value type change workaround
 type sink struct {
 	w io.Writer
-}
-
-// Init initializes the logger using a map of configuration values
-func (l *Logger) Init(values map[string]any) error {
-	cfg, err := NewConfigFromDefaults(values)
-	if err != nil {
-		l.state.LoggerDisabled.Store(true)
-		return err
-	}
-
-	l.initMu.Lock()
-	defer l.initMu.Unlock()
-
-	if l.state.LoggerDisabled.Load() {
-		return fmtErrorf("logger previously failed to initialize and is disabled")
-	}
-
-	return l.apply(cfg)
-}
-
-// InitWithDefaults initializes the logger with built-in defaults and optional overrides
-func (l *Logger) InitWithDefaults(overrides ...string) error {
-	// Parse overrides into a map
-	overrideMap := make(map[string]any)
-
-	defaults := DefaultConfig()
-	for _, override := range overrides {
-		key, valueStr, err := parseKeyValue(override)
-		if err != nil {
-			return err
-		}
-
-		fieldType, err := getFieldType(defaults, key)
-		if err != nil {
-			return fmtErrorf("unknown config key: %s", key)
-		}
-
-		// Parse the value based on the field type
-		var parsedValue any
-		switch fieldType {
-		case "int64":
-			parsedValue, err = strconv.ParseInt(valueStr, 10, 64)
-		case "string":
-			parsedValue = valueStr
-		case "bool":
-			parsedValue, err = strconv.ParseBool(valueStr)
-		case "float64":
-			parsedValue, err = strconv.ParseFloat(valueStr, 64)
-		default:
-			return fmtErrorf("unsupported type for key '%s': %s", key, fieldType)
-		}
-
-		if err != nil {
-			return fmtErrorf("invalid value format for '%s': %w", key, err)
-		}
-
-		overrideMap[strings.ToLower(key)] = parsedValue
-	}
-
-	return l.Init(overrideMap)
-}
-
-// getFieldType uses reflection to determine the type of a config field
-func getFieldType(cfg *Config, fieldName string) (string, error) {
-	v := reflect.ValueOf(cfg).Elem()
-	t := v.Type()
-
-	fieldName = strings.ToLower(fieldName)
-
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		tomlTag := field.Tag.Get("toml")
-		if strings.ToLower(tomlTag) == fieldName {
-			switch field.Type.Kind() {
-			case reflect.String:
-				return "string", nil
-			case reflect.Int64:
-				return "int64", nil
-			case reflect.Float64:
-				return "float64", nil
-			case reflect.Bool:
-				return "bool", nil
-			default:
-				return "", fmt.Errorf("unsupported field type: %v", field.Type.Kind())
-			}
-		}
-	}
-
-	return "", fmt.Errorf("field not found")
 }
 
 // Shutdown gracefully closes the logger, attempting to flush pending records

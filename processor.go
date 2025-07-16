@@ -15,7 +15,7 @@ const (
 	adaptiveIntervalFactor float64 = 1.5 // Slow down
 	adaptiveSpeedUpFactor  float64 = 0.8 // Speed up
 	// Minimum wait time used throughout the package
-	minWaitTime = time.Duration(10 * time.Millisecond)
+	minWaitTime = 10 * time.Millisecond
 )
 
 // processLogs is the main log processing loop running in a separate goroutine
@@ -50,7 +50,7 @@ func (l *Logger) processLogs(ch <-chan logRecord) {
 
 	// State variables for adaptive disk checks
 	var bytesSinceLastCheck int64 = 0
-	var lastCheckTime time.Time = time.Now()
+	var lastCheckTime = time.Now()
 	var logsSinceLastCheck int64 = 0
 
 	// --- Main Loop ---
@@ -235,10 +235,20 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 	enableStdout := c.EnableStdout
 	if enableStdout {
 		if s := l.state.StdoutWriter.Load(); s != nil {
-			// Assert to concrete type: *sink
 			if sinkWrapper, ok := s.(*sink); ok && sinkWrapper != nil {
-				// Use the wrapped writer (sinkWrapper.w)
-				_, _ = sinkWrapper.w.Write(data)
+				// Handle split mode
+				if c.StdoutTarget == "split" {
+					if record.Level >= LevelWarn {
+						// Write WARN and ERROR to stderr
+						_, _ = os.Stderr.Write(data)
+					} else {
+						// Write INFO and DEBUG to stdout
+						_, _ = sinkWrapper.w.Write(data)
+					}
+				} else {
+					// Write to the configured target (stdout or stderr)
+					_, _ = sinkWrapper.w.Write(data)
+				}
 			}
 		}
 	}

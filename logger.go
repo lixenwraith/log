@@ -9,8 +9,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/lixenwraith/config"
 )
 
 // Logger is the core struct that encapsulates all logger functionality
@@ -57,16 +55,16 @@ func NewLogger() *Logger {
 	return l
 }
 
-// getConfig returns the current configuration (thread-safe)
-func (l *Logger) getConfig() *Config {
-	return l.currentConfig.Load().(*Config)
-}
+// ApplyConfig applies a validated configuration to the logger
+// This is the primary way applications should configure the logger
+func (l *Logger) ApplyConfig(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("log: configuration cannot be nil")
+	}
 
-// LoadConfig loads logger configuration from a file
-func (l *Logger) LoadConfig(path string) error {
-	cfg, err := NewConfigFromFile(path)
-	if err != nil {
-		return err
+	// Validate the configuration
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("log: invalid configuration: %w", err)
 	}
 
 	l.initMu.Lock()
@@ -75,18 +73,9 @@ func (l *Logger) LoadConfig(path string) error {
 	return l.apply(cfg)
 }
 
-// SaveConfig saves the current logger configuration to a file
-func (l *Logger) SaveConfig(path string) error {
-	// Create a lixenwraith/config instance for saving
-	saver := config.New()
-	cfg := l.getConfig()
-
-	// Register all fields with their current values
-	if err := saver.RegisterStruct("log.", *cfg); err != nil {
-		return fmt.Errorf("failed to register config for saving: %w", err)
-	}
-
-	return saver.Save(path)
+// getConfig returns the current configuration (thread-safe)
+func (l *Logger) getConfig() *Config {
+	return l.currentConfig.Load().(*Config)
 }
 
 // apply applies a validated configuration and reconfigures logger components
