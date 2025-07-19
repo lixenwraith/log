@@ -73,6 +73,11 @@ func (l *Logger) ApplyConfig(cfg *Config) error {
 	return l.apply(cfg)
 }
 
+// GetConfig returns a copy of current configuration
+func (l *Logger) GetConfig() *Config {
+	return l.getConfig().Clone()
+}
+
 // getConfig returns the current configuration (thread-safe)
 func (l *Logger) getConfig() *Config {
 	return l.currentConfig.Load().(*Config)

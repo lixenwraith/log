@@ -1,17 +1,6 @@
 # Compatibility Adapters
 
-[← Performance](performance.md) | [← Back to README](../README.md) | [Examples →](examples.md)
-
 Guide to using lixenwraith/log with popular Go networking frameworks through compatibility adapters.
-
-## Table of Contents
-
-- [Overview](#overview)
-- [gnet Adapter](#gnet-adapter)
-- [fasthttp Adapter](#fasthttp-adapter)
-- [Builder Pattern](#builder-pattern)
-- [Structured Logging](#structured-logging)
-- [Advanced Configuration](#advanced-configuration)
 
 ## Overview
 
@@ -41,7 +30,9 @@ import (
 
 // Create logger
 logger := log.NewLogger()
-logger.InitWithDefaults("directory=/var/log/gnet")
+cfg := log.DefaultConfig()
+cfg.Directory = "/var/log/gnet"
+logger.ApplyConfig(cfg)
 defer logger.Shutdown()
 
 // Create adapter
@@ -108,11 +99,11 @@ func (es *echoServer) OnTraffic(c gnet.Conn) gnet.Action {
 
 func main() {
     logger := log.NewLogger()
-    logger.InitWithDefaults(
-        "directory=/var/log/gnet",
-        "format=json",
-        "buffer_size=2048",
-    )
+	cfg := log.DefaultConfig()
+    cfg.Directory = "/var/log/gnet"
+	cfg.Format = "json"
+	cfg.BufferSize = 2048
+	logger.ApplyConfig(cfg)
     defer logger.Shutdown()
     
     adapter := compat.NewGnetAdapter(logger)
@@ -139,7 +130,9 @@ import (
 
 // Create logger
 logger := log.NewLogger()
-logger.InitWithDefaults("directory=/var/log/fasthttp")
+cfg := log.DefaultConfig()
+cfg.Directory = "/var/log/fasthttp"
+logger.ApplyConfig(cfg)
 defer logger.Shutdown()
 
 // Create adapter
@@ -183,79 +176,53 @@ adapter := compat.NewFastHTTPAdapter(logger,
 )
 ```
 
-### Complete fasthttp Example
-
-```go
-func main() {
-    logger := log.NewLogger()
-    logger.InitWithDefaults(
-        "directory=/var/log/fasthttp",
-        "format=json",
-        "heartbeat_level=1",
-    )
-    defer logger.Shutdown()
-    
-    adapter := compat.NewFastHTTPAdapter(logger,
-        compat.WithDefaultLevel(log.LevelInfo),
-    )
-    
-    server := &fasthttp.Server{
-        Handler: func(ctx *fasthttp.RequestCtx) {
-            // Your handler logic
-            ctx.Success("text/plain", []byte("Hello!"))
-        },
-        Logger:              adapter,
-        Name:               "MyServer",
-        Concurrency:        fasthttp.DefaultConcurrency,
-        DisableKeepalive:   false,
-        TCPKeepalive:       true,
-        ReduceMemoryUsage:  true,
-    }
-    
-    if err := server.ListenAndServe(":8080"); err != nil {
-        logger.Error("Server failed", "error", err)
-    }
-}
-```
-
 ## Builder Pattern
 
-### Shared Configuration
+### Using Existing Logger (Recommended)
 
-Use the builder for multiple adapters with shared configuration:
+Share a configured logger across adapters:
 
 ```go
-// Create builder
-builder := compat.NewBuilder().
-    WithOptions(
-        "directory=/var/log/app",
-        "format=json",
-        "buffer_size=4096",
-        "max_size_mb=100",
-        "heartbeat_level=2",
-    )
-
-// Build adapters
-gnetAdapter, fasthttpAdapter, err := builder.Build()
-if err != nil {
-    panic(err)
-}
-
-// Get logger for direct use
-logger := builder.GetLogger()
+// Create and configure your main logger
+logger := log.NewLogger()
+cfg := log.DefaultConfig()
+cfg.Level = log.LevelDebug
+logger.ApplyConfig(cfg)
 defer logger.Shutdown()
 
-// Use adapters in your servers
-// ...
+// Create builder with existing logger
+builder := compat.NewBuilder().WithLogger(logger)
+
+// Build adapters
+gnetAdapter, _ := builder.BuildGnet()
+fasthttpAdapter, _ := builder.BuildFastHTTP()
 ```
 
-### Structured Adapters
+### Creating New Logger
 
-For enhanced field extraction:
+Let the builder create a logger with config:
 
 ```go
-// Build with structured adapters
-gnetStructured, fasthttpAdapter, err := builder.BuildStructured()
+// Option 1: With custom config
+cfg := log.DefaultConfig()
+cfg.Directory = "/var/log/app"
+builder := compat.NewBuilder().WithConfig(cfg)
+
+// Option 2: Default config (created on first build)
+builder := compat.NewBuilder()
+
+// Build adapters
+gnetAdapter, _ := builder.BuildGnet()
+logger, _ := builder.GetLogger() // Retrieve for direct use
+```
+
+### Structured gnet Adapter
+
+Extract fields from printf-style formats:
+
+```go
+structuredAdapter, _ := builder.BuildStructuredGnet()
+// "client=%s port=%d" → {"client": "...", "port": ...}
 ```
 
 ## Structured Logging
@@ -341,16 +308,14 @@ builder := compat.NewBuilder().
 Configure servers with adapters:
 
 ```go
-// Configure gnet with options
-opts := compat.ConfigureGnetServer(adapter,
-    gnet.WithMulticore(true),
-    gnet.WithReusePort(true),
-)
-gnet.Run(handler, addr, opts...)
+// Simple integration
+logger := log.NewLogger()
 
-// Configure fasthttp
-server := &fasthttp.Server{Handler: handler}
-compat.ConfigureFastHTTPServer(adapter, server)
+builder := compat.NewBuilder().WithLogger(logger)
+gnetAdapter, _ := builder.BuildGnet()
+
+gnet.Run(handler, "tcp://127.0.0.1:9000",
+    gnet.WithLogger(gnetAdapter))
 ```
 
 ### Integration Examples
@@ -441,4 +406,4 @@ func requestLogger(adapter *compat.FastHTTPAdapter) fasthttp.RequestHandler {
 
 ---
 
-[← Performance](performance.md) | [← Back to README](../README.md) | [Examples →](examples.md)
+[← Heartbeat Monitoring](heartbeat-monitoring.md) | [← Back to README](../README.md)

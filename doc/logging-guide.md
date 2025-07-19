@@ -1,18 +1,6 @@
 # Logging Guide
 
-[← API Reference](api-reference.md) | [← Back to README](../README.md) | [Disk Management →](disk-management.md)
-
 Best practices and patterns for effective logging with the lixenwraith/log package.
-
-## Table of Contents
-
-- [Log Levels](#log-levels)
-- [Structured Logging](#structured-logging)
-- [Output Formats](#output-formats)
-- [Function Tracing](#function-tracing)
-- [Error Handling](#error-handling)
-- [Performance Considerations](#performance-considerations)
-- [Logging Patterns](#logging-patterns)
 
 ## Log Levels
 
@@ -30,16 +18,12 @@ The logger uses numeric levels for efficient filtering:
 ### Level Selection Guidelines
 
 ```go
-// Debug: Detailed execution flow
 logger.Debug("Cache lookup", "key", cacheKey, "found", found)
 
-// Info: Important business events
 logger.Info("Order processed", "order_id", orderID, "amount", 99.99)
 
-// Warn: Recoverable issues
 logger.Warn("Retry attempt", "service", "payment", "attempt", 3)
 
-// Error: Failures requiring attention
 logger.Error("Database query failed", "query", query, "error", err)
 ```
 
@@ -47,23 +31,22 @@ logger.Error("Database query failed", "query", query, "error", err)
 
 ```go
 // Development: See everything
-logger.InitWithDefaults("level=-4")  // Debug and above
+logger.ApplyOverride("level=-4")  // Debug and above
 
 // Production: Reduce noise
-logger.InitWithDefaults("level=0")   // Info and above
+logger.ApplyOverride("level=0")   // Info and above
 
 // Critical systems: Errors only
-logger.InitWithDefaults("level=8")   // Error only
+logger.ApplyOverride("level=8")   // Error only
 ```
 
 ## Structured Logging
 
 ### Key-Value Pairs
 
-Always use structured key-value pairs for machine-parseable logs:
+Use structured key-value pairs for machine-parseable logs:
 
 ```go
-// Good: Structured data
 logger.Info("User login",
     "user_id", user.ID,
     "email", user.Email,
@@ -71,8 +54,31 @@ logger.Info("User login",
     "timestamp", time.Now(),
 )
 
-// Avoid: Unstructured strings
+// Works, but not recommended:
 logger.Info(fmt.Sprintf("User %s logged in from %s", user.Email, request.RemoteAddr))
+```
+
+### Structured JSON Fields
+
+For complex structured data with proper JSON marshaling:
+
+```go
+// Use LogStructured for nested objects
+logger.LogStructured(log.LevelInfo, "API request", map[string]any{
+    "endpoint": "/api/users",
+    "method": "POST",
+    "headers": req.Header,
+    "duration_ms": elapsed.Milliseconds(),
+     })
+```
+
+### Raw Output
+
+Outputs raw, unformatted data regardless of configured format:
+
+```go
+// Write raw metrics data
+logger.Write("METRIC", name, value, "ts", time.Now().Unix())
 ```
 
 ### Consistent Field Names
@@ -131,7 +137,7 @@ Default format for development and debugging:
 
 Configuration:
 ```go
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "format=txt",
     "show_timestamp=true",
     "show_level=true",
@@ -149,7 +155,7 @@ Ideal for log aggregation and analysis:
 
 Configuration:
 ```go
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "format=json",
     "show_timestamp=true",
     "show_level=true",
@@ -242,95 +248,11 @@ func (s *Service) ProcessOrder(orderID string) error {
 }
 ```
 
-## Performance Considerations
-
-### Minimize Allocations
-
-```go
-// Avoid: String concatenation
-logger.Info("User " + user.Name + " logged in")
-
-// Good: Structured fields
-logger.Info("User logged in", "username", user.Name)
-
-// Avoid: Sprintf in hot path
-logger.Debug(fmt.Sprintf("Processing item %d of %d", i, total))
-
-// Good: Direct fields
-logger.Debug("Processing item", "current", i, "total", total)
-```
-
-### Conditional Expensive Operations
-
-```go
-// Only compute expensive values if they'll be logged
-if logger.IsEnabled(log.LevelDebug) {
-    stats := computeExpensiveStats()
-    logger.Debug("Detailed statistics", "stats", stats)
-}
-```
-
-### Batch Related Logs
-
-```go
-// Instead of logging each item
-for _, item := range items {
-    logger.Debug("Processing", "item", item)  // Noisy
-}
-
-// Log summary information
-logger.Info("Batch processing",
-    "count", len(items),
-    "first_id", items[0].ID,
-    "last_id", items[len(items)-1].ID,
-)
-```
-
 ## Internal Error Handling
 
-The logger may encounter internal errors during operation (e.g., file rotation failures, disk space issues). By default, writing these errors to stderr is disabled, but can be enabled in configuration for diagnostic purposes.
+The logger may encounter internal errors during operation (e.g., file rotation failures, disk space issues). By default, writing these errors to stderr is disabled, but can be enabled ("internal_errors_to_stderr=true") in configuration for diagnostic purposes.
 
-### Controlling Internal Error Output
-
-For applications requiring clean stderr output, keep internal error messages disabled:
-
-```go
-logger.InitWithDefaults(
-    "internal_errors_to_stderr=false",  // Suppress internal diagnostics
-)
-```
-
-### When to Keep Internal Errors Disabled
-
-Consider disabling internal error output for:
-
-- CLI tools producing structured output
-- Daemons with strict stderr requirements
-- Applications with custom error monitoring
-- Container environments with log aggregation
-
-### Monitoring Without stderr
-
-When internal errors are disabled, monitor logger health using:
-
-1. **Heartbeat monitoring**: Detect issues via heartbeat logs
-   ```go
-   logger.InitWithDefaults(
-       "internal_errors_to_stderr=false",
-       "heartbeat_level=2",  // Include disk stats
-       "heartbeat_interval_s=60",
-   )
-   ```
-
-2. **Check for dropped logs**: The logger tracks dropped messages
-   ```go
-   // Dropped logs appear in regular log output when possible
-   // Look for: "Logs were dropped" messages
-   ```
-
-3. **External monitoring**: Monitor disk space and file system health independently
-
-## Logging Patterns
+## Sample Logging Patterns
 
 ### Request Lifecycle
 
@@ -387,25 +309,6 @@ func (w *Worker) processJob(job Job) {
         "duration_ms", time.Since(job.StartedAt).Milliseconds(),
     )
 }
-```
-
-### Audit Logging
-
-```go
-func (s *Service) auditAction(userID string, action string, resource string, result string) {
-    s.auditLogger.Info("Audit event",
-        "timestamp", time.Now().UTC(),
-        "user_id", userID,
-        "action", action,
-        "resource", resource,
-        "result", result,
-        "ip", getCurrentIP(),
-        "session_id", getSessionID(),
-    )
-}
-
-// Usage
-s.auditAction(user.ID, "DELETE", "post:123", "success")
 ```
 
 ### Metrics Logging

@@ -1,17 +1,6 @@
 # Disk Management
 
-[← Logging Guide](logging-guide.md) | [← Back to README](../README.md) | [Heartbeat Monitoring →](heartbeat-monitoring.md)
-
 Comprehensive guide to log file rotation, retention policies, and disk space management.
-
-## Table of Contents
-
-- [File Rotation](#file-rotation)
-- [Disk Space Management](#disk-space-management)
-- [Retention Policies](#retention-policies)
-- [Adaptive Monitoring](#adaptive-monitoring)
-- [Recovery Behavior](#recovery-behavior)
-- [Best Practices](#best-practices)
 
 ## File Rotation
 
@@ -20,7 +9,7 @@ Comprehensive guide to log file rotation, retention policies, and disk space man
 Log files are automatically rotated when they reach the configured size limit:
 
 ```go
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "max_size_mb=100",  // Rotate at 100MB
 )
 ```
@@ -54,7 +43,7 @@ Components:
 The logger enforces two types of space limits:
 
 ```go
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "max_total_size_mb=1000",   // Total log directory size
     "min_disk_free_mb=5000",    // Minimum free disk space
 )
@@ -72,21 +61,21 @@ When limits are exceeded, the logger:
 
 ```go
 // Conservative: Strict limits
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "max_size_mb=50",          // 50MB files
     "max_total_size_mb=500",   // 500MB total
     "min_disk_free_mb=1000",   // 1GB free required
 )
 
 // Generous: Large files, external archival
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "max_size_mb=1000",        // 1GB files
     "max_total_size_mb=0",     // No total limit
     "min_disk_free_mb=100",    // 100MB free required
 )
 
 // Balanced: Production defaults
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "max_size_mb=100",         // 100MB files
     "max_total_size_mb=5000",  // 5GB total
     "min_disk_free_mb=500",    // 500MB free required
@@ -100,7 +89,7 @@ logger.InitWithDefaults(
 Automatically delete logs older than a specified duration:
 
 ```go
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "retention_period_hrs=168",    // Keep 7 days
     "retention_check_mins=60",     // Check hourly
 )
@@ -110,21 +99,21 @@ logger.InitWithDefaults(
 
 ```go
 // Daily logs, keep 30 days
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "retention_period_hrs=720",    // 30 days
     "retention_check_mins=60",     // Check hourly
     "max_size_mb=1000",           // 1GB daily files
 )
 
 // High-frequency logs, keep 24 hours
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "retention_period_hrs=24",     // 1 day
     "retention_check_mins=15",     // Check every 15 min
     "max_size_mb=100",            // 100MB files
 )
 
 // Compliance: Keep 90 days
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "retention_period_hrs=2160",   // 90 days
     "retention_check_mins=360",    // Check every 6 hours
     "max_total_size_mb=100000",   // 100GB total
@@ -145,7 +134,7 @@ When multiple policies conflict, cleanup priority is:
 The logger adjusts disk check frequency based on logging volume:
 
 ```go
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "enable_adaptive_interval=true",
     "disk_check_interval_ms=5000",    // Base: 5 seconds
     "min_check_interval_ms=100",      // Minimum: 100ms
@@ -164,7 +153,7 @@ logger.InitWithDefaults(
 Check disk-related heartbeat messages:
 
 ```go
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "heartbeat_level=2",           // Enable disk stats
     "heartbeat_interval_s=300",    // Every 5 minutes
 )
@@ -176,27 +165,6 @@ Output:
 ```
 
 ## Recovery Behavior
-
-### Disk Full Handling
-
-When disk space is exhausted:
-
-1. **Detection**: Write failure or space check triggers recovery
-2. **Cleanup Attempt**: Delete oldest logs to free space
-3. **Status Update**: Set `disk_status_ok=false` if cleanup fails
-4. **Log Dropping**: New logs dropped until space available
-5. **Recovery**: Automatic retry on next disk check
-
-### Monitoring Recovery
-
-```go
-// Check for disk issues in logs
-grep "disk full" /var/log/myapp/*.log
-grep "cleanup failed" /var/log/myapp/*.log
-
-// Monitor disk status in heartbeats
-grep "disk_status_ok=false" /var/log/myapp/*.log
-```
 
 ### Manual Intervention
 
@@ -228,7 +196,7 @@ Estimate log volume and set appropriate limits:
 // - Entries per second: 100
 // - Daily volume: 200 * 100 * 86400 = 1.7GB
 
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "max_size_mb=2000",          // 2GB files (~ 1 day)
     "max_total_size_mb=15000",   // 15GB (~ 1 week)
     "retention_period_hrs=168",   // 7 days
@@ -241,7 +209,7 @@ For long-term storage, implement external archival:
 
 ```go
 // Configure for archival
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "max_size_mb=1000",          // 1GB files for easy transfer
     "max_total_size_mb=10000",   // 10GB local buffer
     "retention_period_hrs=48",    // 2 days local
@@ -305,7 +273,7 @@ mkdir -p /mnt/logs
 mount /dev/sdb1 /mnt/logs
 
 # Configure logger
-logger.InitWithDefaults(
+logger.ApplyOverride(
     "directory=/mnt/logs/myapp",
     "max_total_size_mb=50000",   # Use most of volume
     "min_disk_free_mb=1000",     # Leave 1GB free
@@ -320,7 +288,7 @@ Verify cleanup works before production:
 // Test configuration
 func TestDiskCleanup(t *testing.T) {
     logger := log.NewLogger()
-    logger.InitWithDefaults(
+    logger.ApplyOverride(
         "directory=./test_logs",
         "max_size_mb=1",             // Small files
         "max_total_size_mb=5",       // Low limit

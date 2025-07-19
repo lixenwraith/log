@@ -1,19 +1,6 @@
 # API Reference
 
-[← Configuration](configuration.md) | [← Back to README](../README.md) | [Logging Guide →](logging-guide.md)
-
 Complete API documentation for the lixenwraith/log package.
-
-## Table of Contents
-
-- [Logger Creation](#logger-creation)
-- [Initialization Methods](#initialization-methods)
-- [Logging Methods](#logging-methods)
-- [Trace Logging Methods](#trace-logging-methods)
-- [Special Logging Methods](#special-logging-methods)
-- [Control Methods](#control-methods)
-- [Constants](#constants)
-- [Error Types](#error-types)
 
 ## Logger Creation
 
@@ -32,88 +19,49 @@ logger := log.NewLogger()
 
 ## Initialization Methods
 
-### Init
+### ApplyConfig
 
 ```go
-func (l *Logger) Init(cfg *config.Config, basePath string) error
+func (l *Logger) ApplyConfig(cfg *Config) error
 ```
 
-Initializes the logger using settings from a `config.Config` instance.
+Applies a validated configuration to the logger. This is the recommended method for applications that need full control over configuration.
 
 **Parameters:**
-- `cfg`: Configuration instance containing logger settings
-- `basePath`: Prefix for configuration keys (e.g., "logging" looks for "logging.level", "logging.directory", etc.)
+- `cfg`: A `*Config` struct with desired settings
 
 **Returns:**
-- `error`: Initialization error if configuration is invalid
+- `error`: Configuration error if invalid
 
 **Example:**
 ```go
-cfg := config.New()
-cfg.Load("app.toml", os.Args[1:])
-err := logger.Init(cfg, "logging")
+logger := log.NewLogger()
+
+cfg := log.GetConfig()
+cfg.Level = log.LevelDebug
+cfg.Directory = "/var/log/app"
+err := logger.ApplyConfig(cfg)
 ```
 
-### InitWithDefaults
+### ApplyOverride
 
 ```go
-func (l *Logger) InitWithDefaults(overrides ...string) error
+func (l *Logger) ApplyOverride(overrides ...string) error
 ```
 
-Initializes the logger using built-in defaults with optional overrides.
+Applies key-value overrides to the logger. Convenient interface for minor changes.
 
 **Parameters:**
-- `overrides`: Variable number of "key=value" strings
+- `overrides`: Variadic overrides in the format "key=value"
 
 **Returns:**
-- `error`: Initialization error if overrides are invalid
+- `error`: Configuration error if invalid
 
 **Example:**
 ```go
-err := logger.InitWithDefaults(
-    "directory=/var/log/app",
-    "level=-4",
-    "format=json",
-)
-```
+logger := log.NewLogger()
 
-### LoadConfig
-
-```go
-func (l *Logger) LoadConfig(path string, args []string) error
-```
-
-Loads configuration from a TOML file with CLI overrides.
-
-**Parameters:**
-- `path`: Path to TOML configuration file
-- `args`: Command-line arguments for overrides
-
-**Returns:**
-- `error`: Load or initialization error
-
-**Example:**
-```go
-err := logger.LoadConfig("config.toml", os.Args[1:])
-```
-
-### SaveConfig
-
-```go
-func (l *Logger) SaveConfig(path string) error
-```
-
-Saves the current logger configuration to a file.
-
-**Parameters:**
-- `path`: Path where configuration should be saved
-
-**Returns:**
-- `error`: Save error if write fails
-
-**Example:**
-```go
-err := logger.SaveConfig("current-config.toml")
+err := logger.ApplyOverride("directory=/var/log/app", "name=app")
 ```
 
 ## Logging Methods
@@ -170,6 +118,37 @@ Logs a message at error level (8).
 **Example:**
 ```go
 logger.Error("Database connection failed", "host", "db.example.com", "error", err)
+```
+
+### LogStructured
+
+```go
+func (l *Logger) LogStructured(level int64, message string, fields map[string]any)
+```
+
+Logs a message with structured fields as proper JSON (when format="json").
+
+**Example:**
+```go
+logger.LogStructured(log.LevelInfo, "User action", map[string]any{
+    "user_id": 42,
+    "action": "login",
+    "metadata": map[string]any{"ip": "192.168.1.1"},
+     })
+```
+
+### Write
+
+```go
+func (l *Logger) Write(args ...any)
+```
+
+Outputs raw, unformatted data regardless of configured format. Bypasses all formatting (timestamps, levels, JSON structure) and writes args as space-separated strings without a trailing newline.
+
+**Example:**
+```go
+logger.Write("METRIC", "cpu_usage", 85.5, "timestamp", 1234567890)
+// Output: METRIC cpu_usage 85.5 timestamp 1234567890
 ```
 
 ## Trace Logging Methods
@@ -328,18 +307,6 @@ const (
 
 Special levels for heartbeat monitoring that bypass level filtering.
 
-### Format Flags
-
-```go
-const (
-    FlagShowTimestamp int64 = 0b01
-    FlagShowLevel     int64 = 0b10
-    FlagDefault             = FlagShowTimestamp | FlagShowLevel
-)
-```
-
-Flags controlling log entry format.
-
 ### Level Helper Function
 
 ```go
@@ -366,7 +333,7 @@ The logger returns errors prefixed with "log: " for easy identification:
 
 ```go
 // Configuration errors
-"log: invalid format: 'xml' (use txt or json)"
+"log: invalid format: 'xml' (use txt, json, or raw)"
 "log: buffer_size must be positive: 0"
 
 // Initialization errors
@@ -382,9 +349,7 @@ The logger returns errors prefixed with "log: " for easy identification:
 
 All public methods are thread-safe and can be called concurrently from multiple goroutines. The logger uses atomic operations and channels to ensure safe concurrent access without locks in the critical path.
 
-## Usage Examples
-
-### Complete Service Example
+### Usage Pattern Example
 
 ```go
 type Service struct {
@@ -393,12 +358,11 @@ type Service struct {
 
 func NewService() (*Service, error) {
     logger := log.NewLogger()
-    err := logger.InitWithDefaults(
+    err := logger.ApplyOverride(
         "directory=/var/log/service",
         "format=json",
         "buffer_size=2048",
-        "heartbeat_level=1",
-    )
+        "heartbeat_level=1")
     if err != nil {
         return nil, fmt.Errorf("logger init: %w", err)
     }
@@ -425,4 +389,4 @@ func (s *Service) Shutdown() error {
 
 ---
 
-[← Configuration](configuration.md) | [← Back to README](../README.md) | [Logging Guide →](logging-guide.md)
+[← Configuration Builder](config-builder.md) | [← Back to README](../README.md) | [Logging Guide →](logging-guide.md)

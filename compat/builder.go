@@ -3,6 +3,7 @@ package compat
 
 import (
 	"fmt"
+
 	"github.com/lixenwraith/log"
 )
 

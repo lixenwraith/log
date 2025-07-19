@@ -27,7 +27,7 @@ import (
 func main() {
     // Create and initialize logger
     logger := log.NewLogger()
-    err := logger.InitWithDefaults("directory=/var/log/myapp")
+    err := logger.ApplyOverride("directory=/var/log/myapp")
     if err != nil {
         panic(err)
     }
@@ -56,17 +56,12 @@ go get github.com/lixenwraith/config
 
 - **[Getting Started](doc/getting-started.md)** - Installation and basic usage
 - **[Configuration Guide](doc/configuration.md)** - All configuration options
+- **[Configuration Builder](doc/config-builder.md)** - Builder pattern guide
 - **[API Reference](doc/api-reference.md)** - Complete API documentation
 - **[Logging Guide](doc/logging-guide.md)** - Logging methods and best practices
-- **[Examples](doc/examples.md)** - Sample applications and use cases
-
-### Advanced Topics
-
 - **[Disk Management](doc/disk-management.md)** - File rotation and cleanup
 - **[Heartbeat Monitoring](doc/heartbeat-monitoring.md)** - Operational statistics
-- **[Performance Guide](doc/performance.md)** - Architecture and optimization
 - **[Compatibility Adapters](doc/compatibility-adapters.md)** - Framework integrations
-- **[Troubleshooting](doc/troubleshooting.md)** - Common issues and solutions
 
 ## 🎯 Framework Integration
 
@@ -93,8 +88,6 @@ Application → Log Methods → Buffered Channel → Background Processor → Fi
                 ↓                                      ↓
             (non-blocking)                    (rotation, cleanup, monitoring)
 ```
-
-Learn more in the [Performance Guide](doc/performance.md).
 
 ## 🤝 Contributing
 
