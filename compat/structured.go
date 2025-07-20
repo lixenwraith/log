@@ -1,4 +1,4 @@
-// FILE: compat/structured.go
+// FILE: lixenwraith/log/compat/structured.go
 package compat
 
 import (

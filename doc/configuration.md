@@ -12,14 +12,14 @@ logger := log.NewLogger()
 
 ## Configuration Methods
 
-### ApplyConfig & ApplyOverride
+### ApplyConfig & ApplyConfigString
 
 Direct struct configuration using the Config struct, or key-value overrides:
 
 ```go
 logger := log.NewLogger() // logger instance created with DefaultConfig (using default values)
 
-logger.Info("info txt log record written to ./logs/log.log")
+logger.Info("info txt log record written to ./log/log.log")
 
 // Directly change config struct
 cfg := log.GetConfig()
@@ -27,13 +27,13 @@ cfg.Level = log.LevelDebug
 cfg.Name = "myapp"
 cfg.Directory = "/var/log/myapp"
 cfg.Format = "json"
-cfg.MaxSizeMB = 100
+cfg.MaxSizeKB = 100
 err := logger.ApplyConfig(cfg)
 
 logger.Info("info json log record written to /var/log/myapp/myapp.log")
 
 // Override values with key-value string
-err = logger.ApplyOverride(
+err = logger.ApplyConfigString(
     "directory=/var/log/",
 	"extension=txt"
     "format=txt")
@@ -49,7 +49,7 @@ logger.Info("info txt log record written to /var/log/myapp.txt")
 |-----------|------|-------------|------------|
 | `level` | `int64` | Minimum log level (-4=Debug, 0=Info, 4=Warn, 8=Error) | `0` |
 | `name` | `string` | Base name for log files | `"log"`    |
-| `directory` | `string` | Directory to store log files | `"./logs"` |
+| `directory` | `string` | Directory to store log files | `"./log"` |
 | `format` | `string` | Output format: `"txt"` or `"json"` | `"txt"` |
 | `extension` | `string` | Log file extension (without dot) | `"log"` |
 | `internal_errors_to_stderr` | `bool` | Write logger's internal errors to stderr | `false` |
@@ -78,11 +78,11 @@ logger.Info("info txt log record written to /var/log/myapp.txt")
 ### File Management
 
 | Parameter | Type | Description | Default |
-|-----------|------|-------------|---------|
-| `max_size_mb` | `int64` | Maximum size per log file (MB) | `10` |
-| `max_total_size_mb` | `int64` | Maximum total log directory size (MB) | `50` |
-| `min_disk_free_mb` | `int64` | Minimum required free disk space (MB) | `100` |
-| `retention_period_hrs` | `float64` | Hours to keep log files (0=disabled) | `0.0` |
+|-----------|------|-------------|--------|
+| `max_size_kb` | `int64` | Maximum size per log file (KB) | `1000` |
+| `max_total_size_kb` | `int64` | Maximum total log directory size (KB) | `5000` |
+| `min_disk_free_kb` | `int64` | Minimum required free disk space (KB) | `10000` |
+| `retention_period_hrs` | `float64` | Hours to keep log files (0=disabled) | `0.0`  |
 | `retention_check_mins` | `float64` | Retention check interval (minutes) | `60.0` |
 
 ### Disk Monitoring

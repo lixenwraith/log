@@ -43,10 +43,10 @@ cfg.Directory = "/var/log/app"
 err := logger.ApplyConfig(cfg)
 ```
 
-### ApplyOverride
+### ApplyConfigString
 
 ```go
-func (l *Logger) ApplyOverride(overrides ...string) error
+func (l *Logger) ApplyConfigString(overrides ...string) error
 ```
 
 Applies key-value overrides to the logger. Convenient interface for minor changes.
@@ -61,7 +61,7 @@ Applies key-value overrides to the logger. Convenient interface for minor change
 ```go
 logger := log.NewLogger()
 
-err := logger.ApplyOverride("directory=/var/log/app", "name=app")
+err := logger.ApplyConfigString("directory=/var/log/app", "name=app")
 ```
 
 ## Logging Methods
@@ -358,7 +358,7 @@ type Service struct {
 
 func NewService() (*Service, error) {
     logger := log.NewLogger()
-    err := logger.ApplyOverride(
+    err := logger.ApplyConfigString(
         "directory=/var/log/service",
         "format=json",
         "buffer_size=2048",

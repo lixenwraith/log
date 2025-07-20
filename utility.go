@@ -1,4 +1,4 @@
-// FILE: utility.go
+// FILE: lixenwraith/log/utility.go
 package log
 
 import (

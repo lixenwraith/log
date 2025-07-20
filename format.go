@@ -1,4 +1,4 @@
-// FILE: format.go
+// FILE: lixenwraith/log/format.go
 package log
 
 import (
@@ -218,13 +218,20 @@ func (s *serializer) serializeText(flags int64, timestamp time.Time, level int64
 func (s *serializer) writeTextValue(v any) {
 	switch val := v.(type) {
 	case string:
-		if len(val) == 0 || strings.ContainsRune(val, ' ') {
-			s.buf = append(s.buf, '"')
-			s.writeString(val)
-			s.buf = append(s.buf, '"')
-		} else {
-			s.buf = append(s.buf, val...)
-		}
+		s.buf = append(s.buf, val...)
+
+		// // TODO: Make configurable or remove after analyzing use cases
+		// // json handles string quotes
+		// // txt format behavior may be unexpected with surrounding quotes,
+		// // causing issues with automatic log parsers and complicates regex processing
+		// if len(val) == 0 || strings.ContainsRune(val, ' ') {
+		// 	s.buf = append(s.buf, '"')
+		// 	s.writeString(val)
+		// 	s.buf = append(s.buf, '"')
+		// } else {
+		// 	s.buf = append(s.buf, val...)
+		// }
+
 	case int:
 		s.buf = strconv.AppendInt(s.buf, int64(val), 10)
 	case int64:
@@ -456,5 +463,3 @@ func (s *serializer) setTimestampFormat(format string) {
 	}
 	s.timestampFormat = format
 }
-
-const hexChars = "0123456789abcdef"

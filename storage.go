@@ -1,4 +1,4 @@
-// FILE: storage.go
+// FILE: lixenwraith/log/storage.go
 package log
 
 import (
@@ -54,10 +54,10 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 
 	dir := c.Directory
 	ext := c.Extension
-	maxTotalMB := c.MaxTotalSizeMB
-	minDiskFreeMB := c.MinDiskFreeMB
-	maxTotal := maxTotalMB * 1024 * 1024
-	minFreeRequired := minDiskFreeMB * 1024 * 1024
+	maxTotalKB := c.MaxTotalSizeKB
+	minDiskFreeKB := c.MinDiskFreeKB
+	maxTotal := maxTotalKB * sizeMultiplier
+	minFreeRequired := minDiskFreeKB * sizeMultiplier
 
 	if maxTotal <= 0 && minFreeRequired <= 0 {
 		if !l.state.DiskStatusOK.Load() {
@@ -134,6 +134,26 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 		}
 		return true
 	}
+
+	// TODO: add logic to drain channel if disk gets full
+	// needs logic for wasOK and doc update
+	// if !l.state.DiskStatusOK.Load() && wasOK {
+	// 	// Drain pending logs to prevent writes
+	// 	ch := l.getCurrentLogChannel()
+	// 	drained := 0
+	// drainLoop:
+	// 	for {
+	// 		select {
+	// 		case <-ch:
+	// 			drained++
+	// 		default:
+	// 			break drainLoop
+	// 		}
+	// 	}
+	// 	if drained > 0 {
+	// 		l.state.DroppedLogs.Add(uint64(drained))
+	// 	}
+	// }
 }
 
 // getDiskFreeSpace retrieves available disk space for the given path

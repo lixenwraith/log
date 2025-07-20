@@ -31,13 +31,13 @@ logger.Error("Database query failed", "query", query, "error", err)
 
 ```go
 // Development: See everything
-logger.ApplyOverride("level=-4")  // Debug and above
+logger.ApplyConfigString("level=-4")  // Debug and above
 
 // Production: Reduce noise
-logger.ApplyOverride("level=0")   // Info and above
+logger.ApplyConfigString("level=0")   // Info and above
 
 // Critical systems: Errors only
-logger.ApplyOverride("level=8")   // Error only
+logger.ApplyConfigString("level=8")   // Error only
 ```
 
 ## Structured Logging
@@ -137,7 +137,7 @@ Default format for development and debugging:
 
 Configuration:
 ```go
-logger.ApplyOverride(
+logger.ApplyConfigString(
     "format=txt",
     "show_timestamp=true",
     "show_level=true",
@@ -155,7 +155,7 @@ Ideal for log aggregation and analysis:
 
 Configuration:
 ```go
-logger.ApplyOverride(
+logger.ApplyConfigString(
     "format=json",
     "show_timestamp=true",
     "show_level=true",

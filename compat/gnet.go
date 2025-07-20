@@ -1,4 +1,4 @@
-// FILE: compat/gnet.go
+// FILE: lixenwraith/log/compat/gnet.go
 package compat
 
 import (

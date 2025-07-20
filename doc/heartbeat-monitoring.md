@@ -20,7 +20,7 @@ Heartbeats are periodic log messages that provide operational statistics about t
 No heartbeat messages are generated.
 
 ```go
-logger.ApplyOverride(
+logger.ApplyConfigString(
     "heartbeat_level=0",  // No heartbeats
 )
 ```
@@ -30,7 +30,7 @@ logger.ApplyOverride(
 Basic logger operation metrics:
 
 ```go
-logger.ApplyOverride(
+logger.ApplyConfigString(
     "heartbeat_level=1",
     "heartbeat_interval_s=300",  // Every 5 minutes
 )
@@ -52,7 +52,7 @@ logger.ApplyOverride(
 Includes file and disk usage information:
 
 ```go
-logger.ApplyOverride(
+logger.ApplyConfigString(
     "heartbeat_level=2",
     "heartbeat_interval_s=300",
 )
@@ -77,7 +77,7 @@ logger.ApplyOverride(
 Includes runtime and memory metrics:
 
 ```go
-logger.ApplyOverride(
+logger.ApplyConfigString(
     "heartbeat_level=3",
     "heartbeat_interval_s=60",  // Every minute for detailed monitoring
 )
@@ -99,7 +99,7 @@ logger.ApplyOverride(
 ### Basic Configuration
 
 ```go
-logger.ApplyOverride(
+logger.ApplyConfigString(
     "heartbeat_level=2",         // Process + Disk stats
     "heartbeat_interval_s=300",  // Every 5 minutes
 )
@@ -118,19 +118,19 @@ logger.ApplyOverride(
 
 ```go
 // Start with basic monitoring
-logger.ApplyOverride(
+logger.ApplyConfigString(
     "heartbeat_level=1",
     "heartbeat_interval_s=600",
 )
 
 // During incident, increase detail
-logger.ApplyOverride(
+logger.ApplyConfigString(
     "heartbeat_level=3",
     "heartbeat_interval_s=60",
 )
 
 // After resolution, reduce back
-logger.ApplyOverride(
+logger.ApplyConfigString(
     "heartbeat_level=1",
     "heartbeat_interval_s=600",
 )

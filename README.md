@@ -27,7 +27,7 @@ import (
 func main() {
     // Create and initialize logger
     logger := log.NewLogger()
-    err := logger.ApplyOverride("directory=/var/log/myapp")
+    err := logger.ApplyConfigString("directory=/var/log/myapp")
     if err != nil {
         panic(err)
     }

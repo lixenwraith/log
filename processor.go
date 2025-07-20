@@ -1,21 +1,9 @@
-// FILE: processor.go
+// FILE: lixenwraith/log/processor.go
 package log
 
 import (
-	"fmt"
 	"os"
-	"runtime"
 	"time"
-)
-
-const (
-	// Threshold for triggering reactive disk check
-	reactiveCheckThresholdBytes int64 = 10 * 1024 * 1024
-	// Factors to adjust check interval
-	adaptiveIntervalFactor float64 = 1.5 // Slow down
-	adaptiveSpeedUpFactor  float64 = 0.8 // Speed up
-	// Minimum wait time used throughout the package
-	minWaitTime = 10 * time.Millisecond
 )
 
 // processLogs is the main log processing loop running in a separate goroutine
@@ -103,112 +91,6 @@ func (l *Logger) processLogs(ch <-chan logRecord) {
 	}
 }
 
-// TimerSet holds all timers used in processLogs
-type TimerSet struct {
-	flushTicker     *time.Ticker
-	diskCheckTicker *time.Ticker
-	retentionTicker *time.Ticker
-	heartbeatTicker *time.Ticker
-	retentionChan   <-chan time.Time
-	heartbeatChan   <-chan time.Time
-}
-
-// setupProcessingTimers creates and configures all necessary timers for the processor
-func (l *Logger) setupProcessingTimers() *TimerSet {
-	timers := &TimerSet{}
-
-	c := l.getConfig()
-
-	// Set up flush timer
-	flushInterval := c.FlushIntervalMs
-	if flushInterval <= 0 {
-		flushInterval = DefaultConfig().FlushIntervalMs
-	}
-	timers.flushTicker = time.NewTicker(time.Duration(flushInterval) * time.Millisecond)
-
-	// Set up retention timer if enabled
-	timers.retentionChan = l.setupRetentionTimer(timers)
-
-	// Set up disk check timer
-	timers.diskCheckTicker = l.setupDiskCheckTimer()
-
-	// Set up heartbeat timer
-	timers.heartbeatChan = l.setupHeartbeatTimer(timers)
-
-	return timers
-}
-
-// closeProcessingTimers stops all active timers
-func (l *Logger) closeProcessingTimers(timers *TimerSet) {
-	timers.flushTicker.Stop()
-	if timers.diskCheckTicker != nil {
-		timers.diskCheckTicker.Stop()
-	}
-	if timers.retentionTicker != nil {
-		timers.retentionTicker.Stop()
-	}
-	if timers.heartbeatTicker != nil {
-		timers.heartbeatTicker.Stop()
-	}
-}
-
-// setupRetentionTimer configures the retention check timer if retention is enabled
-func (l *Logger) setupRetentionTimer(timers *TimerSet) <-chan time.Time {
-	c := l.getConfig()
-	retentionPeriodHrs := c.RetentionPeriodHrs
-	retentionCheckMins := c.RetentionCheckMins
-	retentionDur := time.Duration(retentionPeriodHrs * float64(time.Hour))
-	retentionCheckInterval := time.Duration(retentionCheckMins * float64(time.Minute))
-
-	if retentionDur > 0 && retentionCheckInterval > 0 {
-		timers.retentionTicker = time.NewTicker(retentionCheckInterval)
-		l.updateEarliestFileTime() // Initial check
-		return timers.retentionTicker.C
-	}
-	return nil
-}
-
-// setupDiskCheckTimer configures the disk check timer
-func (l *Logger) setupDiskCheckTimer() *time.Ticker {
-	c := l.getConfig()
-	diskCheckIntervalMs := c.DiskCheckIntervalMs
-	if diskCheckIntervalMs <= 0 {
-		diskCheckIntervalMs = 5000
-	}
-	currentDiskCheckInterval := time.Duration(diskCheckIntervalMs) * time.Millisecond
-
-	// Ensure initial interval respects bounds
-	minCheckIntervalMs := c.MinCheckIntervalMs
-	maxCheckIntervalMs := c.MaxCheckIntervalMs
-	minCheckInterval := time.Duration(minCheckIntervalMs) * time.Millisecond
-	maxCheckInterval := time.Duration(maxCheckIntervalMs) * time.Millisecond
-
-	if currentDiskCheckInterval < minCheckInterval {
-		currentDiskCheckInterval = minCheckInterval
-	}
-	if currentDiskCheckInterval > maxCheckInterval {
-		currentDiskCheckInterval = maxCheckInterval
-	}
-
-	return time.NewTicker(currentDiskCheckInterval)
-}
-
-// setupHeartbeatTimer configures the heartbeat timer if heartbeats are enabled
-func (l *Logger) setupHeartbeatTimer(timers *TimerSet) <-chan time.Time {
-	c := l.getConfig()
-	heartbeatLevel := c.HeartbeatLevel
-	if heartbeatLevel > 0 {
-		intervalS := c.HeartbeatIntervalS
-		// Make sure interval is positive
-		if intervalS <= 0 {
-			intervalS = DefaultConfig().HeartbeatIntervalS
-		}
-		timers.heartbeatTicker = time.NewTicker(time.Duration(intervalS) * time.Second)
-		return timers.heartbeatTicker.C
-	}
-	return nil
-}
-
 // processLogRecord handles individual log records, returning bytes written
 func (l *Logger) processLogRecord(record logRecord) int64 {
 	c := l.getConfig()
@@ -263,8 +145,8 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 	currentFileSize := l.state.CurrentSize.Load()
 	estimatedSize := currentFileSize + dataLen
 
-	maxSizeMB := c.MaxSizeMB
-	if maxSizeMB > 0 && estimatedSize > maxSizeMB*1024*1024 {
+	maxSizeKB := c.MaxSizeKB
+	if maxSizeKB > 0 && estimatedSize > maxSizeKB*sizeMultiplier {
 		if err := l.rotateLogFile(); err != nil {
 			l.internalLog("failed to rotate log file: %v\n", err)
 			// Account for the dropped log that triggered the failed rotation
@@ -374,134 +256,4 @@ func (l *Logger) adjustDiskCheckInterval(timers *TimerSet, lastCheckTime time.Ti
 	}
 
 	timers.diskCheckTicker.Reset(newInterval)
-}
-
-// handleHeartbeat processes a heartbeat timer tick
-func (l *Logger) handleHeartbeat() {
-	c := l.getConfig()
-	heartbeatLevel := c.HeartbeatLevel
-
-	if heartbeatLevel >= 1 {
-		l.logProcHeartbeat()
-	}
-
-	if heartbeatLevel >= 2 {
-		l.logDiskHeartbeat()
-	}
-
-	if heartbeatLevel >= 3 {
-		l.logSysHeartbeat()
-	}
-}
-
-// logProcHeartbeat logs process/logger statistics heartbeat
-func (l *Logger) logProcHeartbeat() {
-	processed := l.state.TotalLogsProcessed.Load()
-	dropped := l.state.DroppedLogs.Load()
-	sequence := l.state.HeartbeatSequence.Add(1)
-
-	startTimeVal := l.state.LoggerStartTime.Load()
-	var uptimeHours float64 = 0
-	if startTime, ok := startTimeVal.(time.Time); ok && !startTime.IsZero() {
-		uptime := time.Since(startTime)
-		uptimeHours = uptime.Hours()
-	}
-
-	procArgs := []any{
-		"type", "proc",
-		"sequence", sequence,
-		"uptime_hours", fmt.Sprintf("%.2f", uptimeHours),
-		"processed_logs", processed,
-		"dropped_logs", dropped,
-	}
-
-	l.writeHeartbeatRecord(LevelProc, procArgs)
-}
-
-// logDiskHeartbeat logs disk/file statistics heartbeat
-func (l *Logger) logDiskHeartbeat() {
-	sequence := l.state.HeartbeatSequence.Load()
-	rotations := l.state.TotalRotations.Load()
-	deletions := l.state.TotalDeletions.Load()
-
-	c := l.getConfig()
-	dir := c.Directory
-	ext := c.Extension
-	currentSizeMB := float64(l.state.CurrentSize.Load()) / (1024 * 1024) // Current file size
-	totalSizeMB := float64(-1.0)                                         // Default error value
-	fileCount := -1                                                      // Default error value
-
-	dirSize, err := l.getLogDirSize(dir, ext)
-	if err == nil {
-		totalSizeMB = float64(dirSize) / (1024 * 1024)
-	} else {
-		l.internalLog("warning - heartbeat failed to get dir size: %v\n", err)
-	}
-
-	count, err := l.getLogFileCount(dir, ext)
-	if err == nil {
-		fileCount = count
-	} else {
-		l.internalLog("warning - heartbeat failed to get file count: %v\n", err)
-	}
-
-	diskArgs := []any{
-		"type", "disk",
-		"sequence", sequence,
-		"rotated_files", rotations,
-		"deleted_files", deletions,
-		"total_log_size_mb", fmt.Sprintf("%.2f", totalSizeMB),
-		"log_file_count", fileCount,
-		"current_file_size_mb", fmt.Sprintf("%.2f", currentSizeMB),
-		"disk_status_ok", l.state.DiskStatusOK.Load(),
-	}
-
-	// Add disk free space if we can get it
-	freeSpace, err := l.getDiskFreeSpace(dir)
-	if err == nil {
-		freeSpaceMB := float64(freeSpace) / (1024 * 1024)
-		diskArgs = append(diskArgs, "disk_free_mb", fmt.Sprintf("%.2f", freeSpaceMB))
-	}
-
-	l.writeHeartbeatRecord(LevelDisk, diskArgs)
-}
-
-// logSysHeartbeat logs system/runtime statistics heartbeat
-func (l *Logger) logSysHeartbeat() {
-	sequence := l.state.HeartbeatSequence.Load()
-
-	var memStats runtime.MemStats
-	runtime.ReadMemStats(&memStats)
-
-	sysArgs := []any{
-		"type", "sys",
-		"sequence", sequence,
-		"alloc_mb", fmt.Sprintf("%.2f", float64(memStats.Alloc)/(1024*1024)),
-		"sys_mb", fmt.Sprintf("%.2f", float64(memStats.Sys)/(1024*1024)),
-		"num_gc", memStats.NumGC,
-		"num_goroutine", runtime.NumGoroutine(),
-	}
-
-	// Write the heartbeat record
-	l.writeHeartbeatRecord(LevelSys, sysArgs)
-}
-
-// writeHeartbeatRecord creates and sends a heartbeat log record through the main processing channel
-func (l *Logger) writeHeartbeatRecord(level int64, args []any) {
-	if l.state.LoggerDisabled.Load() || l.state.ShutdownCalled.Load() {
-		return
-	}
-
-	// Create heartbeat record with appropriate flags
-	record := logRecord{
-		Flags:           FlagDefault | FlagShowLevel,
-		TimeStamp:       time.Now(),
-		Level:           level,
-		Trace:           "",
-		Args:            args,
-		unreportedDrops: 0,
-	}
-
-	// Send through the main processing channel
-	l.sendLogRecord(record)
 }

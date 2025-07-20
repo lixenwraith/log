@@ -29,7 +29,7 @@ import (
 
 func main() {
     // Create a new logger instance with default configuration
-    // Writes to file ./logs/log.log
+    // Writes to file ./log/log.log
     logger := log.NewLogger()
     defer logger.Shutdown()
 	
@@ -57,7 +57,7 @@ type Service struct {
 
 func NewService() (*Service, error) {
     logger := log.NewLogger()
-    if err := logger.ApplyOverride(
+    if err := logger.ApplyConfigString(
         "directory=/var/log/service",
         "name=service",
         "format=json",

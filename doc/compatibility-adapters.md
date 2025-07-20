@@ -261,7 +261,7 @@ adapter.Infof("Connected to server")
 // → {"msg": "Connected to server"}
 ```
 
-## Advanced Configuration
+## Example Configuration
 
 ### High-Performance Setup
 
@@ -282,7 +282,7 @@ builder := compat.NewBuilder().
 ```go
 builder := compat.NewBuilder().
     WithOptions(
-        "directory=./logs",
+        "directory=./log",
         "format=txt",              // Human-readable
         "level=-4",                // Debug level
         "trace_depth=3",           // Include traces

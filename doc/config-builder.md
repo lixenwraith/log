@@ -27,7 +27,7 @@ All builder methods return `*ConfigBuilder` for chaining. Errors are accumulated
 | `Directory(dir string)` | `dir`: Path | Sets log directory |
 | `Format(format string)` | `format`: Output format | Sets format ("txt", "json", "raw") |
 | `BufferSize(size int64)` | `size`: Buffer size | Sets channel buffer size |
-| `MaxSizeMB(size int64)` | `size`: Size in MB | Sets max file size |
+| `MaxSizeKB(size int64)` | `size`: Size in MB | Sets max file size |
 | `EnableStdout(enable bool)` | `enable`: Boolean | Enables console output |
 | `DisableFile(disable bool)` | `disable`: Boolean | Disables file output |
 | `HeartbeatLevel(level int64)` | `level`: 0-3 | Sets monitoring level |

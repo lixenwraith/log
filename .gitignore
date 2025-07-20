@@ -2,7 +2,7 @@
 bin
 data
 dev
+log
 logs
-cmake-build-*/
 *.log
 *.toml

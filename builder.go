@@ -1,40 +1,45 @@
-// FILE: builder.go
+// FILE: lixenwraith/log/builder.go
 package log
 
-// ConfigBuilder provides a fluent API for building logger configurations.
+// Builder provides a fluent API for building logger configurations.
 // It wraps a Config instance and provides chainable methods for setting values.
-type ConfigBuilder struct {
+type Builder struct {
 	cfg *Config
 	err error // Accumulate errors for deferred handling
 }
 
-// NewConfigBuilder creates a new configuration builder with default values.
-func NewConfigBuilder() *ConfigBuilder {
-	return &ConfigBuilder{
+// NewBuilder creates a new configuration builder with default values.
+func NewBuilder() *Builder {
+	return &Builder{
 		cfg: DefaultConfig(),
 	}
 }
 
-// Build returns the built configuration and any accumulated errors.
-func (b *ConfigBuilder) Build() (*Config, error) {
+// Build creates a new Logger instance with the specified configuration.
+func (b *Builder) Build() (*Logger, error) {
 	if b.err != nil {
 		return nil, b.err
 	}
-	// Validate the final configuration
-	if err := b.cfg.Validate(); err != nil {
+
+	// Create a new logger.
+	logger := NewLogger()
+
+	// Apply the built configuration. ApplyConfig handles all initialization and validation.
+	if err := logger.ApplyConfig(b.cfg); err != nil {
 		return nil, err
 	}
-	return b.cfg.Clone(), nil
+
+	return logger, nil
 }
 
 // Level sets the log level.
-func (b *ConfigBuilder) Level(level int64) *ConfigBuilder {
+func (b *Builder) Level(level int64) *Builder {
 	b.cfg.Level = level
 	return b
 }
 
 // LevelString sets the log level from a string.
-func (b *ConfigBuilder) LevelString(level string) *ConfigBuilder {
+func (b *Builder) LevelString(level string) *Builder {
 	if b.err != nil {
 		return b
 	}
@@ -48,52 +53,72 @@ func (b *ConfigBuilder) LevelString(level string) *ConfigBuilder {
 }
 
 // Directory sets the log directory.
-func (b *ConfigBuilder) Directory(dir string) *ConfigBuilder {
+func (b *Builder) Directory(dir string) *Builder {
 	b.cfg.Directory = dir
 	return b
 }
 
 // Format sets the output format.
-func (b *ConfigBuilder) Format(format string) *ConfigBuilder {
+func (b *Builder) Format(format string) *Builder {
 	b.cfg.Format = format
 	return b
 }
 
 // BufferSize sets the channel buffer size.
-func (b *ConfigBuilder) BufferSize(size int64) *ConfigBuilder {
+func (b *Builder) BufferSize(size int64) *Builder {
 	b.cfg.BufferSize = size
 	return b
 }
 
-// MaxSizeMB sets the maximum log file size in MB.
-func (b *ConfigBuilder) MaxSizeMB(size int64) *ConfigBuilder {
-	b.cfg.MaxSizeMB = size
+// MaxSizeKB sets the maximum log file size in KB.
+func (b *Builder) MaxSizeKB(size int64) *Builder {
+	b.cfg.MaxSizeKB = size
+	return b
+}
+
+// MaxSizeMB sets the maximum log file size in MB. Convenience.
+func (b *Builder) MaxSizeMB(size int64) *Builder {
+	b.cfg.MaxSizeKB = size * 1000
 	return b
 }
 
 // EnableStdout enables mirroring logs to stdout/stderr.
-func (b *ConfigBuilder) EnableStdout(enable bool) *ConfigBuilder {
+func (b *Builder) EnableStdout(enable bool) *Builder {
 	b.cfg.EnableStdout = enable
 	return b
 }
 
 // DisableFile disables file output entirely.
-func (b *ConfigBuilder) DisableFile(disable bool) *ConfigBuilder {
+func (b *Builder) DisableFile(disable bool) *Builder {
 	b.cfg.DisableFile = disable
 	return b
 }
 
 // HeartbeatLevel sets the heartbeat monitoring level.
-func (b *ConfigBuilder) HeartbeatLevel(level int64) *ConfigBuilder {
+func (b *Builder) HeartbeatLevel(level int64) *Builder {
 	b.cfg.HeartbeatLevel = level
 	return b
 }
 
+// HeartbeatIntervalS sets the heartbeat monitoring level.
+func (b *Builder) HeartbeatIntervalS(interval int64) *Builder {
+	b.cfg.HeartbeatIntervalS = interval
+	return b
+}
+
 // Example usage:
-// cfg, err := log.NewConfigBuilder().
-//     Directory("/var/log/app").
-//     LevelString("debug").
-//     Format("json").
-//     BufferSize(4096).
-//     EnableStdout(true).
-//     Build()
+// logger, err := log.NewBuilder().
+//
+//	Directory("/var/log/app").
+//	LevelString("debug").
+//	Format("json").
+//	BufferSize(4096).
+//	EnableStdout(true).
+//	Build()
+//
+// if err == nil {
+//
+//	 defer logger.Shutdown()
+//	 logger.Info("Logger initialized successfully")
+//
+// }
