@@ -26,6 +26,10 @@ func createTestLogger(t *testing.T) (*Logger, string) {
 	err := logger.ApplyConfig(cfg)
 	require.NoError(t, err)
 
+	// Start the logger, which is the new requirement.
+	err = logger.Start()
+	require.NoError(t, err)
+
 	return logger, tmpDir
 }
 
@@ -46,6 +50,7 @@ func TestApplyConfig(t *testing.T) {
 	assert.True(t, logger.state.IsInitialized.Load())
 
 	// Verify log file creation
+	// The file now contains "Logger started"
 	logPath := filepath.Join(tmpDir, "log.log")
 	_, err := os.Stat(logPath)
 	assert.NoError(t, err)
@@ -190,7 +195,9 @@ func TestLoggerFormats(t *testing.T) {
 			name:   "raw format",
 			format: "raw",
 			check: func(t *testing.T, content string) {
-				assert.Equal(t, "test message", strings.TrimSpace(content))
+				// The "Logger started" message is also written in raw format.
+				// We just check that our test message is present in the output.
+				assert.Contains(t, content, "test message")
 			},
 		},
 	}
@@ -211,21 +218,19 @@ func TestLoggerFormats(t *testing.T) {
 			err := logger.ApplyConfig(cfg)
 			require.NoError(t, err)
 
-			// Small delay for reconfiguragion
-			time.Sleep(100 * time.Millisecond)
+			// Start the logger after configuring it.
+			err = logger.Start()
+			require.NoError(t, err)
 
 			defer logger.Shutdown()
 
 			logger.Info("test message")
 
-			// Small delay for log to be processed
-			time.Sleep(100 * time.Millisecond)
-
 			err = logger.Flush(time.Second)
 			require.NoError(t, err)
 
 			// Small delay for flush
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 
 			content, err := os.ReadFile(filepath.Join(tmpDir, "log.log"))
 			require.NoError(t, err)
@@ -265,6 +270,8 @@ func TestLoggerStdoutMirroring(t *testing.T) {
 
 	err := logger.ApplyConfig(cfg)
 	require.NoError(t, err)
+	err = logger.Start()
+	require.NoError(t, err)
 	defer logger.Shutdown()
 
 	// Just verify it doesn't panic - actual stdout capture is complex
@@ -277,16 +284,17 @@ func TestLoggerWrite(t *testing.T) {
 
 	logger.Write("raw", "output", 123)
 
-	// Small delay for log process
-	time.Sleep(100 * time.Millisecond)
-
 	logger.Flush(time.Second)
 
 	// Small delay for flush
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	content, err := os.ReadFile(filepath.Join(tmpDir, "log.log"))
 	require.NoError(t, err)
 
-	assert.Equal(t, "raw output 123", string(content))
+	// The file will contain the "Logger started" message first.
+	// We check that our raw output is also present.
+	// Since raw output doesn't add a newline, the file should end with our string.
+	assert.Contains(t, string(content), "raw output 123")
+	assert.True(t, strings.HasSuffix(string(content), "raw output 123"))
 }

@@ -52,6 +52,12 @@ func (b *Builder) LevelString(level string) *Builder {
 	return b
 }
 
+// Name sets the log level.
+func (b *Builder) Name(name string) *Builder {
+	b.cfg.Name = name
+	return b
+}
+
 // Directory sets the log directory.
 func (b *Builder) Directory(dir string) *Builder {
 	b.cfg.Directory = dir
@@ -61,6 +67,12 @@ func (b *Builder) Directory(dir string) *Builder {
 // Format sets the output format.
 func (b *Builder) Format(format string) *Builder {
 	b.cfg.Format = format
+	return b
+}
+
+// Extension sets the log level.
+func (b *Builder) Extension(ext string) *Builder {
+	b.cfg.Extension = ext
 	return b
 }
 

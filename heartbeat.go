@@ -28,7 +28,6 @@ func (l *Logger) handleHeartbeat() {
 // logProcHeartbeat logs process/logger statistics heartbeat
 func (l *Logger) logProcHeartbeat() {
 	processed := l.state.TotalLogsProcessed.Load()
-	dropped := l.state.DroppedLogs.Load()
 	sequence := l.state.HeartbeatSequence.Add(1)
 
 	startTimeVal := l.state.LoggerStartTime.Load()
@@ -38,12 +37,25 @@ func (l *Logger) logProcHeartbeat() {
 		uptimeHours = uptime.Hours()
 	}
 
+	// Get total drops (persistent through logger instance lifecycle)
+	totalDropped := l.state.TotalDroppedLogs.Load()
+
+	// Atomically get and reset interval drops
+	// NOTE: If PROC heartbeat fails, interval drops are lost and total count tracks such fails
+	// Design choice is not to parse the heartbeat log record and restore the count
+	droppedInInterval := l.state.DroppedLogs.Swap(0)
+
 	procArgs := []any{
 		"type", "proc",
 		"sequence", sequence,
 		"uptime_hours", fmt.Sprintf("%.2f", uptimeHours),
 		"processed_logs", processed,
-		"dropped_logs", dropped,
+		"total_dropped_logs", totalDropped,
+	}
+
+	// Add interval (since last proc heartbeat) drops if > 0
+	if droppedInInterval > 0 {
+		procArgs = append(procArgs, "dropped_since_last", droppedInInterval)
 	}
 
 	l.writeHeartbeatRecord(LevelProc, procArgs)
@@ -125,14 +137,12 @@ func (l *Logger) writeHeartbeatRecord(level int64, args []any) {
 
 	// Create heartbeat record with appropriate flags
 	record := logRecord{
-		Flags:           FlagDefault | FlagShowLevel,
-		TimeStamp:       time.Now(),
-		Level:           level,
-		Trace:           "",
-		Args:            args,
-		unreportedDrops: 0,
+		Flags:     FlagDefault | FlagShowLevel,
+		TimeStamp: time.Now(),
+		Level:     level,
+		Trace:     "",
+		Args:      args,
 	}
 
-	// Send through the main processing channel
 	l.sendLogRecord(record)
 }

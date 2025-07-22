@@ -94,10 +94,11 @@ func (l *Logger) processLogs(ch <-chan logRecord) {
 // processLogRecord handles individual log records, returning bytes written
 func (l *Logger) processLogRecord(record logRecord) int64 {
 	c := l.getConfig()
-	// Check if the record should process this record
 	disableFile := c.DisableFile
 	if !disableFile && !l.state.DiskStatusOK.Load() {
+		// Simple increment of both counters
 		l.state.DroppedLogs.Add(1)
+		l.state.TotalDroppedLogs.Add(1)
 		return 0
 	}
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,10 @@ func createTestCompatBuilder(t *testing.T) (*Builder, *log.Logger, string) {
 		Format("json").
 		LevelString("debug").
 		Build()
+	require.NoError(t, err)
+
+	// Start the logger before using it.
+	err = appLogger.Start()
 	require.NoError(t, err)
 
 	builder := NewBuilder().WithLogger(appLogger)
@@ -81,6 +86,8 @@ func TestCompatBuilder(t *testing.T) {
 		assert.NotNil(t, fasthttpAdapter)
 
 		logger1, _ := builder.GetLogger()
+		// The builder now creates AND starts the logger internally if needed.
+		// We need to defer shutdown to clean up resources.
 		defer logger1.Shutdown()
 	})
 }
@@ -104,7 +111,8 @@ func TestGnetAdapter(t *testing.T) {
 	err = logger.Flush(time.Second)
 	require.NoError(t, err)
 
-	lines := readLogFile(t, tmpDir, 5)
+	// The "Logger started" message is also logged, so we expect 6 lines.
+	lines := readLogFile(t, tmpDir, 6)
 
 	// Define expected log data. The order in the "fields" array is fixed by the adapter call.
 	expected := []struct{ level, msg string }{
@@ -115,7 +123,16 @@ func TestGnetAdapter(t *testing.T) {
 		{"ERROR", "gnet fatal id=5"},
 	}
 
-	for i, line := range lines {
+	// Filter out the "Logger started" line
+	var logLines []string
+	for _, line := range lines {
+		if !strings.Contains(line, "Logger started") {
+			logLines = append(logLines, line)
+		}
+	}
+	require.Len(t, logLines, 5, "Should have 5 gnet log lines after filtering")
+
+	for i, line := range logLines {
 		var entry map[string]interface{}
 		err := json.Unmarshal([]byte(line), &entry)
 		require.NoError(t, err, "Failed to parse log line: %s", line)
@@ -145,10 +162,21 @@ func TestStructuredGnetAdapter(t *testing.T) {
 	err = logger.Flush(time.Second)
 	require.NoError(t, err)
 
-	lines := readLogFile(t, tmpDir, 1)
+	// The "Logger started" message is also logged, so we expect 2 lines.
+	lines := readLogFile(t, tmpDir, 2)
+
+	// Find our specific log line
+	var logLine string
+	for _, line := range lines {
+		if strings.Contains(line, "request served") {
+			logLine = line
+			break
+		}
+	}
+	require.NotEmpty(t, logLine, "Did not find the structured gnet log line")
 
 	var entry map[string]interface{}
-	err = json.Unmarshal([]byte(lines[0]), &entry)
+	err = json.Unmarshal([]byte(logLine), &entry)
 	require.NoError(t, err)
 
 	// The structured adapter parses keys and values, so we check them directly.
@@ -178,17 +206,26 @@ func TestFastHTTPAdapter(t *testing.T) {
 		"an error occurred while processing",
 	}
 	for _, msg := range testMessages {
-		// FIX: Use a constant format string to prevent build errors from `go vet`.
 		adapter.Printf("%s", msg)
 	}
 
 	err = logger.Flush(time.Second)
 	require.NoError(t, err)
 
-	lines := readLogFile(t, tmpDir, 4)
+	// Expect 4 test messages + 1 "Logger started" message
+	lines := readLogFile(t, tmpDir, 5)
 	expectedLevels := []string{"INFO", "DEBUG", "WARN", "ERROR"}
 
-	for i, line := range lines {
+	// Filter out the "Logger started" line
+	var logLines []string
+	for _, line := range lines {
+		if !strings.Contains(line, "Logger started") {
+			logLines = append(logLines, line)
+		}
+	}
+	require.Len(t, logLines, 4, "Should have 4 fasthttp log lines after filtering")
+
+	for i, line := range logLines {
 		var entry map[string]interface{}
 		err := json.Unmarshal([]byte(line), &entry)
 		require.NoError(t, err, "Failed to parse log line: %s", line)

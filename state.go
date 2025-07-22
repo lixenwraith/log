@@ -9,11 +9,12 @@ import (
 // State encapsulates the runtime state of the logger
 type State struct {
 	// General state
-	IsInitialized   atomic.Bool
-	LoggerDisabled  atomic.Bool
+	IsInitialized   atomic.Bool // Tracks successful initialization, not start of log processor
+	LoggerDisabled  atomic.Bool // Tracks logger stop due to issues (e.g. disk full)
 	ShutdownCalled  atomic.Bool
 	DiskFullLogged  atomic.Bool
 	DiskStatusOK    atomic.Bool
+	Started         atomic.Bool // Tracks calls to Start() and Stop()
 	ProcessorExited atomic.Bool // Tracks if the processor goroutine is running or has exited
 
 	// Flushing state
@@ -30,7 +31,8 @@ type State struct {
 
 	// Log state
 	ActiveLogChannel atomic.Value  // stores chan logRecord
-	DroppedLogs      atomic.Uint64 // Counter for logs dropped
+	DroppedLogs      atomic.Uint64 // Counter for logs dropped since last heartbeat
+	TotalDroppedLogs atomic.Uint64 // Counter for total logs dropped since logger start
 
 	// Heartbeat statistics
 	HeartbeatSequence  atomic.Uint64 // Counter for heartbeat sequence numbers

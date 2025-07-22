@@ -346,6 +346,39 @@ func applyConfigField(cfg *Config, key, value string) error {
 	return nil
 }
 
+// configRequiresRestart checks if config changes require processor restart
+func configRequiresRestart(oldCfg, newCfg *Config) bool {
+	// Channel size change requires restart
+	if oldCfg.BufferSize != newCfg.BufferSize {
+		return true
+	}
+
+	// File output changes require restart
+	if oldCfg.DisableFile != newCfg.DisableFile {
+		return true
+	}
+
+	// Directory or file naming changes require restart
+	if oldCfg.Directory != newCfg.Directory ||
+		oldCfg.Name != newCfg.Name ||
+		oldCfg.Extension != newCfg.Extension {
+		return true
+	}
+
+	// Timer changes require restart
+	if oldCfg.FlushIntervalMs != newCfg.FlushIntervalMs ||
+		oldCfg.DiskCheckIntervalMs != newCfg.DiskCheckIntervalMs ||
+		oldCfg.EnableAdaptiveInterval != newCfg.EnableAdaptiveInterval ||
+		oldCfg.HeartbeatIntervalS != newCfg.HeartbeatIntervalS ||
+		oldCfg.HeartbeatLevel != newCfg.HeartbeatLevel ||
+		oldCfg.RetentionCheckMins != newCfg.RetentionCheckMins ||
+		oldCfg.RetentionPeriodHrs != newCfg.RetentionPeriodHrs {
+		return true
+	}
+
+	return false
+}
+
 // combineConfigErrors combines multiple configuration errors into a single error.
 func combineConfigErrors(errors []error) error {
 	if len(errors) == 0 {

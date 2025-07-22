@@ -70,9 +70,7 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 	freeSpace, err := l.getDiskFreeSpace(dir)
 	if err != nil {
 		l.internalLog("warning - failed to check free disk space for '%s': %v\n", dir, err)
-		if l.state.DiskStatusOK.Load() {
-			l.state.DiskStatusOK.Store(false)
-		}
+		l.state.DiskStatusOK.Store(false)
 		return false
 	}
 
@@ -110,9 +108,7 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 				}
 				l.sendLogRecord(diskFullRecord)
 			}
-			if l.state.DiskStatusOK.Load() {
-				l.state.DiskStatusOK.Store(false)
-			}
+			l.state.DiskStatusOK.Store(false)
 			return false
 		}
 		// Cleanup succeeded

@@ -30,6 +30,10 @@ func TestFullLifecycle(t *testing.T) {
 	require.NoError(t, err, "Logger creation with builder should succeed")
 	require.NotNil(t, logger)
 
+	// Start the logger before use.
+	err = logger.Start()
+	require.NoError(t, err)
+
 	// Defer shutdown right after successful creation
 	defer func() {
 		err := logger.Shutdown(2 * time.Second)
@@ -97,7 +101,7 @@ func TestConcurrentOperations(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 3; i++ {
-			err := logger.ApplyConfigString(fmt.Sprintf("buffer_size=%d", 100+i*100))
+			err := logger.ApplyConfigString(fmt.Sprintf("trace_depth=%d", i))
 			assert.NoError(t, err)
 			time.Sleep(50 * time.Millisecond)
 		}
@@ -137,6 +141,9 @@ func TestErrorRecovery(t *testing.T) {
 		err := logger.ApplyConfig(cfg)
 		require.NoError(t, err)
 
+		// Small delay to ensure the processor has time to react if needed
+		time.Sleep(100 * time.Millisecond)
+
 		// Should detect disk space issue during the check
 		isOK := logger.performDiskCheck(true)
 		assert.False(t, isOK, "Disk check should fail when min free space is not met")
@@ -145,14 +152,21 @@ func TestErrorRecovery(t *testing.T) {
 		// Small delay to ensure the processor has time to react if needed
 		time.Sleep(100 * time.Millisecond)
 
-		// Logs should be dropped when disk status is not OK
 		preDropped := logger.state.DroppedLogs.Load()
 		logger.Info("this log entry should be dropped")
 
-		// Small delay to let the log processor attempt to process the record
-		time.Sleep(100 * time.Millisecond)
+		var postDropped uint64
+		var success bool
+		// Poll for up to 500ms for the async processor to update the state.
+		for i := 0; i < 50; i++ {
+			postDropped = logger.state.DroppedLogs.Load()
+			if postDropped > preDropped {
+				success = true
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 
-		postDropped := logger.state.DroppedLogs.Load()
-		assert.Greater(t, postDropped, preDropped, "Dropped log count should increase")
+		require.True(t, success, "Dropped log count should have increased after logging with disk full")
 	})
 }

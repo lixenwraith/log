@@ -32,13 +32,15 @@ func (l *Logger) getFlags() int64 {
 func (l *Logger) sendLogRecord(record logRecord) {
 	defer func() {
 		if r := recover(); r != nil { // Catch panic on send to closed channel
-			l.handleFailedSend(record)
+			l.handleFailedSend()
 		}
 	}()
 
-	if l.state.ShutdownCalled.Load() || l.state.LoggerDisabled.Load() {
+	if l.state.ShutdownCalled.Load() ||
+		l.state.LoggerDisabled.Load() ||
+		!l.state.Started.Load() {
 		// Process drops even if logger is disabled or shutting down
-		l.handleFailedSend(record)
+		l.handleFailedSend()
 		return
 	}
 
@@ -47,51 +49,42 @@ func (l *Logger) sendLogRecord(record logRecord) {
 	// Non-blocking send
 	select {
 	case ch <- record:
-		// Success: record sent, channel was not full, check if log drops need to be reported
-		if record.unreportedDrops == 0 {
-			// Get number of dropped logs and reset the counter to zero
-			droppedCount := l.state.DroppedLogs.Swap(0)
-
-			if droppedCount > 0 {
-				// Dropped logs report
-				dropRecord := logRecord{
-					Flags:           FlagDefault,
-					TimeStamp:       time.Now(),
-					Level:           LevelError,
-					Args:            []any{"Logs were dropped", "dropped_count", droppedCount},
-					unreportedDrops: droppedCount, // Carry the count for recovery
-				}
-				// No success check is required, count is restored if it fails
-				l.sendLogRecord(dropRecord)
-			}
-		}
+		// Success
 	default:
-		l.handleFailedSend(record)
+		l.handleFailedSend()
 	}
 }
 
-// handleFailedSend restores or increments drop counter
-func (l *Logger) handleFailedSend(record logRecord) {
-	// For regular record, add 1 to dropped log count
-	// For drop report, restore the count
-	amountToAdd := uint64(1)
-	if record.unreportedDrops > 0 {
-		amountToAdd = record.unreportedDrops
-	}
-	l.state.DroppedLogs.Add(amountToAdd)
+// handleFailedSend increments drop counters
+func (l *Logger) handleFailedSend() {
+	l.state.DroppedLogs.Add(1)      // Interval counter
+	l.state.TotalDroppedLogs.Add(1) // Total counter
 }
 
 // log handles the core logging logic
 func (l *Logger) log(flags int64, level int64, depth int64, args ...any) {
+	// State checks
 	if !l.state.IsInitialized.Load() {
 		return
 	}
 
+	if !l.state.Started.Load() {
+		// Log to internal error channel if configured
+		cfg := l.getConfig()
+		if cfg.InternalErrorsToStderr {
+			l.internalLog("warning - logger not started, dropping log entry\n")
+		}
+		return
+	}
+
+	// Discard or proceed based on level
 	cfg := l.getConfig()
 	if level < cfg.Level {
 		return
 	}
 
+	// Get trace info from runtime
+	// Depth filter hard-coded based on call stack of current package design
 	var trace string
 	if depth > 0 {
 		const skipTrace = 3 // log.Info -> log -> getTrace (Adjust if call stack changes)
@@ -99,12 +92,11 @@ func (l *Logger) log(flags int64, level int64, depth int64, args ...any) {
 	}
 
 	record := logRecord{
-		Flags:           flags,
-		TimeStamp:       time.Now(),
-		Level:           level,
-		Trace:           trace,
-		Args:            args,
-		unreportedDrops: 0, // 0 for regular logs
+		Flags:     flags,
+		TimeStamp: time.Now(),
+		Level:     level,
+		Trace:     trace,
+		Args:      args,
 	}
 	l.sendLogRecord(record)
 }

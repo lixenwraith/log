@@ -8,12 +8,11 @@ import (
 
 // logRecord represents a single log entry.
 type logRecord struct {
-	Flags           int64
-	TimeStamp       time.Time
-	Level           int64
-	Trace           string
-	Args            []any
-	unreportedDrops uint64 // Dropped log tracker
+	Flags     int64
+	TimeStamp time.Time
+	Level     int64
+	Trace     string
+	Args      []any
 }
 
 // TimerSet holds all timers used in processLogs

@@ -102,10 +102,96 @@ func (l *Logger) GetConfig() *Config {
 	return l.getConfig().Clone()
 }
 
+// Start begins log processing. Safe to call multiple times.
+// Returns error if logger is not initialized.
+func (l *Logger) Start() error {
+	if !l.state.IsInitialized.Load() {
+		return fmtErrorf("logger not initialized, call ApplyConfig first")
+	}
+
+	// Check if processor didn't exit cleanly last time
+	if l.state.Started.Load() && !l.state.ProcessorExited.Load() {
+		// Force stop to clean up
+		l.internalLog("warning - processor still running from previous start, forcing stop\n")
+		if err := l.Stop(); err != nil {
+			return fmtErrorf("failed to stop hung processor: %w", err)
+		}
+	}
+
+	// Only start if not already started
+	if l.state.Started.CompareAndSwap(false, true) {
+		cfg := l.getConfig()
+
+		// Create log channel
+		logChannel := make(chan logRecord, cfg.BufferSize)
+		l.state.ActiveLogChannel.Store(logChannel)
+
+		// Start processor
+		l.state.ProcessorExited.Store(false)
+		go l.processLogs(logChannel)
+
+		// Log startup if file output enabled
+		if !cfg.DisableFile {
+			startRecord := logRecord{
+				Flags:     FlagDefault,
+				TimeStamp: time.Now(),
+				Level:     LevelInfo,
+				Args:      []any{"Logger started"},
+			}
+			l.sendLogRecord(startRecord)
+		}
+	}
+
+	return nil
+}
+
+// Stop halts log processing. Can be restarted with Start().
+// Returns nil if already stopped.
+func (l *Logger) Stop(timeout ...time.Duration) error {
+	if !l.state.Started.CompareAndSwap(true, false) {
+		return nil // Already stopped
+	}
+
+	// Calculate effective timeout
+	var effectiveTimeout time.Duration
+	if len(timeout) > 0 {
+		effectiveTimeout = timeout[0]
+	} else {
+		cfg := l.getConfig()
+		effectiveTimeout = 2 * time.Duration(cfg.FlushIntervalMs) * time.Millisecond
+	}
+
+	// Get current channel and close it
+	ch := l.getCurrentLogChannel()
+	if ch != nil {
+		// Create closed channel for immediate replacement
+		closedChan := make(chan logRecord)
+		close(closedChan)
+		l.state.ActiveLogChannel.Store(closedChan)
+
+		// Close the actual channel to signal processor
+		close(ch)
+	}
+
+	// Wait for processor to exit (with timeout)
+	deadline := time.Now().Add(effectiveTimeout)
+	for time.Now().Before(deadline) {
+		if l.state.ProcessorExited.Load() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if !l.state.ProcessorExited.Load() {
+		return fmtErrorf("processor did not exit within timeout (%v)", effectiveTimeout)
+	}
+
+	return nil
+}
+
 // Shutdown gracefully closes the logger, attempting to flush pending records
 // If no timeout is provided, uses a default of 2x flush interval
 func (l *Logger) Shutdown(timeout ...time.Duration) error {
-
 	if !l.state.ShutdownCalled.CompareAndSwap(false, true) {
 		return nil
 	}
@@ -119,35 +205,9 @@ func (l *Logger) Shutdown(timeout ...time.Duration) error {
 		return nil
 	}
 
-	l.initMu.Lock()
-	ch := l.getCurrentLogChannel()
-	closedChan := make(chan logRecord)
-	close(closedChan)
-	l.state.ActiveLogChannel.Store(closedChan)
-	if ch != closedChan {
-		close(ch)
-	}
-	l.initMu.Unlock()
-
-	c := l.getConfig()
-	var effectiveTimeout time.Duration
-	if len(timeout) > 0 {
-		effectiveTimeout = timeout[0]
-	} else {
-		flushIntervalMs := c.FlushIntervalMs
-		// Default to 2x flush interval
-		effectiveTimeout = 2 * time.Duration(flushIntervalMs) * time.Millisecond
-	}
-
-	deadline := time.Now().Add(effectiveTimeout)
-	pollInterval := minWaitTime // Reasonable check period
-	processorCleanlyExited := false
-	for time.Now().Before(deadline) {
-		if l.state.ProcessorExited.Load() {
-			processorCleanlyExited = true
-			break
-		}
-		time.Sleep(pollInterval)
+	var stopErr error
+	if l.state.Started.Load() {
+		stopErr = l.Stop(timeout...)
 	}
 
 	l.state.IsInitialized.Store(false)
@@ -168,9 +228,8 @@ func (l *Logger) Shutdown(timeout ...time.Duration) error {
 		}
 	}
 
-	if !processorCleanlyExited {
-		timeoutErr := fmtErrorf("logger processor did not exit within timeout (%v)", effectiveTimeout)
-		finalErr = combineErrors(finalErr, timeoutErr)
+	if stopErr != nil {
+		finalErr = combineErrors(finalErr, stopErr)
 	}
 
 	return finalErr
@@ -181,8 +240,12 @@ func (l *Logger) Flush(timeout time.Duration) error {
 	l.state.flushMutex.Lock()
 	defer l.state.flushMutex.Unlock()
 
+	// State checks
 	if !l.state.IsInitialized.Load() || l.state.ShutdownCalled.Load() {
 		return fmtErrorf("logger not initialized or already shut down")
+	}
+	if !l.state.Started.Load() {
+		return fmtErrorf("logger not started")
 	}
 
 	// Create a channel to wait for confirmation from the processor
@@ -304,6 +367,18 @@ func (l *Logger) applyConfig(cfg *Config) error {
 
 	// Get current state
 	wasInitialized := l.state.IsInitialized.Load()
+	wasStarted := l.state.Started.Load()
+
+	// Determine if restart is needed
+	needsRestart := wasStarted && wasInitialized && configRequiresRestart(oldCfg, cfg)
+
+	// Stop processor if restart needed
+	if needsRestart {
+		if err := l.Stop(); err != nil {
+			l.currentConfig.Store(oldCfg) // Rollback
+			return fmtErrorf("failed to stop processor for restart: %w", err)
+		}
+	}
 
 	// Get current file handle
 	currentFilePtr := l.state.CurrentFile.Load()
@@ -313,7 +388,10 @@ func (l *Logger) applyConfig(cfg *Config) error {
 	}
 
 	// Determine if we need a new file
-	needsNewFile := !wasInitialized || currentFile == nil
+	needsNewFile := !wasInitialized || currentFile == nil ||
+		oldCfg.Directory != cfg.Directory ||
+		oldCfg.Name != cfg.Name ||
+		oldCfg.Extension != cfg.Extension
 
 	// Handle file state transitions
 	if cfg.DisableFile {
@@ -351,27 +429,6 @@ func (l *Logger) applyConfig(cfg *Config) error {
 		}
 	}
 
-	// Close the old channel if reconfiguring
-	if wasInitialized {
-		oldCh := l.getCurrentLogChannel()
-		if oldCh != nil {
-			// Create new channel then close old channel
-			newLogChannel := make(chan logRecord, cfg.BufferSize)
-			l.state.ActiveLogChannel.Store(newLogChannel)
-			close(oldCh)
-
-			// Start new processor with new channel
-			l.state.ProcessorExited.Store(false)
-			go l.processLogs(newLogChannel)
-		}
-	} else {
-		// Initial startup
-		newLogChannel := make(chan logRecord, cfg.BufferSize)
-		l.state.ActiveLogChannel.Store(newLogChannel)
-		l.state.ProcessorExited.Store(false)
-		go l.processLogs(newLogChannel)
-	}
-
 	// Setup stdout writer based on config
 	if cfg.EnableStdout {
 		var writer io.Writer
@@ -388,8 +445,13 @@ func (l *Logger) applyConfig(cfg *Config) error {
 	// Mark as initialized
 	l.state.IsInitialized.Store(true)
 	l.state.ShutdownCalled.Store(false)
-	l.state.DiskFullLogged.Store(false)
-	l.state.DiskStatusOK.Store(true)
+	// l.state.DiskFullLogged.Store(false)
+	// l.state.DiskStatusOK.Store(true)
+
+	// Restart processor if it was running and needs restart
+	if needsRestart {
+		return l.Start()
+	}
 
 	return nil
 }
