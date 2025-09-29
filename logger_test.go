@@ -89,12 +89,12 @@ func TestApplyConfigString(t *testing.T) {
 		{
 			name: "boolean values",
 			configString: []string{
-				"enable_stdout=true",
+				"enable_console=true",
 				"disable_file=false",
 				"show_timestamp=false",
 			},
 			verify: func(t *testing.T, cfg *Config) {
-				assert.True(t, cfg.EnableStdout)
+				assert.True(t, cfg.EnableConsole)
 				assert.False(t, cfg.DisableFile)
 				assert.False(t, cfg.ShowTimestamp)
 			},
@@ -265,7 +265,7 @@ func TestLoggerStdoutMirroring(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.Directory = t.TempDir()
-	cfg.EnableStdout = true
+	cfg.EnableConsole = true
 	cfg.DisableFile = true
 
 	err := logger.ApplyConfig(cfg)

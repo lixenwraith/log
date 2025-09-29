@@ -84,8 +84,8 @@ func TestConfigValidate(t *testing.T) {
 		},
 		{
 			name:      "invalid stdout target",
-			modify:    func(c *Config) { c.StdoutTarget = "invalid" },
-			wantError: "invalid stdout_target",
+			modify:    func(c *Config) { c.ConsoleTarget = "invalid" },
+			wantError: "invalid console_target",
 		},
 		{
 			name: "min > max check interval",

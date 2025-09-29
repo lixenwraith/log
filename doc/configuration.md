@@ -60,11 +60,11 @@ logger.Info("info txt log record written to /var/log/myapp.txt")
 |-----------|------|-------------|---------|
 | `show_timestamp` | `bool` | Include timestamps in log entries | `true` |
 | `show_level` | `bool` | Include log level in entries | `true` |
-| `enable_stdout` | `bool` | Mirror logs to stdout/stderr | `false` |
-| `stdout_target` | `string` | Console target: `"stdout"`, `"stderr"`, or `"split"` | `"stdout"` |
+| `enable_console` | `bool` | Mirror logs to stdout/stderr | `false` |
+| `console_target` | `string` | Console target: `"stdout"`, `"stderr"`, or `"split"` | `"stdout"` |
 | `disable_file` | `bool` | Disable file output (console-only) | `false` |
 
-**Note:** When `stdout_target="split"`, INFO/DEBUG logs go to stdout while WARN/ERROR logs go to stderr.
+**Note:** When `console_target="split"`, INFO/DEBUG logs go to stdout while WARN/ERROR logs go to stderr.
 
 ### Performance Tuning
 

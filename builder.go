@@ -94,12 +94,6 @@ func (b *Builder) MaxSizeMB(size int64) *Builder {
 	return b
 }
 
-// EnableStdout enables mirroring logs to stdout/stderr.
-func (b *Builder) EnableStdout(enable bool) *Builder {
-	b.cfg.EnableStdout = enable
-	return b
-}
-
 // DisableFile disables file output entirely.
 func (b *Builder) DisableFile(disable bool) *Builder {
 	b.cfg.DisableFile = disable
@@ -118,6 +112,120 @@ func (b *Builder) HeartbeatIntervalS(interval int64) *Builder {
 	return b
 }
 
+// ShowTimestamp sets whether to show timestamps in logs.
+func (b *Builder) ShowTimestamp(show bool) *Builder {
+	b.cfg.ShowTimestamp = show
+	return b
+}
+
+// ShowLevel sets whether to show log levels.
+func (b *Builder) ShowLevel(show bool) *Builder {
+	b.cfg.ShowLevel = show
+	return b
+}
+
+// TimestampFormat sets the timestamp format string.
+func (b *Builder) TimestampFormat(format string) *Builder {
+	b.cfg.TimestampFormat = format
+	return b
+}
+
+// MaxTotalSizeKB sets the maximum total size of all log files in KB.
+func (b *Builder) MaxTotalSizeKB(size int64) *Builder {
+	b.cfg.MaxTotalSizeKB = size
+	return b
+}
+
+// MaxTotalSizeMB sets the maximum total size of all log files in MB. Convenience.
+func (b *Builder) MaxTotalSizeMB(size int64) *Builder {
+	b.cfg.MaxTotalSizeKB = size * 1000
+	return b
+}
+
+// MinDiskFreeKB sets the minimum required free disk space in KB.
+func (b *Builder) MinDiskFreeKB(size int64) *Builder {
+	b.cfg.MinDiskFreeKB = size
+	return b
+}
+
+// MinDiskFreeMB sets the minimum required free disk space in MB. Convenience.
+func (b *Builder) MinDiskFreeMB(size int64) *Builder {
+	b.cfg.MinDiskFreeKB = size * 1000
+	return b
+}
+
+// FlushIntervalMs sets the flush interval in milliseconds.
+func (b *Builder) FlushIntervalMs(interval int64) *Builder {
+	b.cfg.FlushIntervalMs = interval
+	return b
+}
+
+// TraceDepth sets the default trace depth for stack traces.
+func (b *Builder) TraceDepth(depth int64) *Builder {
+	b.cfg.TraceDepth = depth
+	return b
+}
+
+// RetentionPeriodHrs sets the log retention period in hours.
+func (b *Builder) RetentionPeriodHrs(hours float64) *Builder {
+	b.cfg.RetentionPeriodHrs = hours
+	return b
+}
+
+// RetentionCheckMins sets the retention check interval in minutes.
+func (b *Builder) RetentionCheckMins(mins float64) *Builder {
+	b.cfg.RetentionCheckMins = mins
+	return b
+}
+
+// DiskCheckIntervalMs sets the disk check interval in milliseconds.
+func (b *Builder) DiskCheckIntervalMs(interval int64) *Builder {
+	b.cfg.DiskCheckIntervalMs = interval
+	return b
+}
+
+// EnableAdaptiveInterval enables adaptive disk check intervals.
+func (b *Builder) EnableAdaptiveInterval(enable bool) *Builder {
+	b.cfg.EnableAdaptiveInterval = enable
+	return b
+}
+
+// EnablePeriodicSync enables periodic file sync.
+func (b *Builder) EnablePeriodicSync(enable bool) *Builder {
+	b.cfg.EnablePeriodicSync = enable
+	return b
+}
+
+// MinCheckIntervalMs sets the minimum disk check interval in milliseconds.
+func (b *Builder) MinCheckIntervalMs(interval int64) *Builder {
+	b.cfg.MinCheckIntervalMs = interval
+	return b
+}
+
+// MaxCheckIntervalMs sets the maximum disk check interval in milliseconds.
+func (b *Builder) MaxCheckIntervalMs(interval int64) *Builder {
+	b.cfg.MaxCheckIntervalMs = interval
+	return b
+}
+
+// ConsoleTarget sets the console output target ("stdout", "stderr", or "split").
+func (b *Builder) ConsoleTarget(target string) *Builder {
+	b.cfg.ConsoleTarget = target
+	return b
+}
+
+// InternalErrorsToStderr sets whether to write internal errors to stderr.
+func (b *Builder) InternalErrorsToStderr(enable bool) *Builder {
+	b.cfg.InternalErrorsToStderr = enable
+	return b
+}
+
+// EnableConsole enables mirroring logs to console.
+func (b *Builder) EnableConsole(enable bool) *Builder {
+	b.cfg.EnableConsole = enable
+	return b
+}
+
 // Example usage:
 // logger, err := log.NewBuilder().
 //
@@ -125,7 +233,7 @@ func (b *Builder) HeartbeatIntervalS(interval int64) *Builder {
 //	LevelString("debug").
 //	Format("json").
 //	BufferSize(4096).
-//	EnableStdout(true).
+//	EnableConsole(true).
 //	Build()
 //
 // if err == nil {

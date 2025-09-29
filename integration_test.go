@@ -22,7 +22,7 @@ func TestFullLifecycle(t *testing.T) {
 		Format("json").
 		MaxSizeKB(1).
 		BufferSize(1000).
-		EnableStdout(false).
+		EnableConsole(false).
 		HeartbeatLevel(1).
 		HeartbeatIntervalS(2).
 		Build()
@@ -60,7 +60,7 @@ func TestFullLifecycle(t *testing.T) {
 	logger.InfoTrace(2, "trace info")
 
 	// Apply runtime override
-	err = logger.ApplyConfigString("enable_stdout=true", "stdout_target=stderr")
+	err = logger.ApplyConfigString("enable_console=true", "console_target=stderr")
 	require.NoError(t, err)
 
 	// More logging after reconfiguration

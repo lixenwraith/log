@@ -115,12 +115,12 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 	dataLen := int64(len(data))
 
 	// Mirror to stdout if enabled
-	enableStdout := c.EnableStdout
-	if enableStdout {
+	enableConsole := c.EnableConsole
+	if enableConsole {
 		if s := l.state.StdoutWriter.Load(); s != nil {
 			if sinkWrapper, ok := s.(*sink); ok && sinkWrapper != nil {
 				// Handle split mode
-				if c.StdoutTarget == "split" {
+				if c.ConsoleTarget == "split" {
 					if record.Level >= LevelWarn {
 						// Write WARN and ERROR to stderr
 						_, _ = os.Stderr.Write(data)

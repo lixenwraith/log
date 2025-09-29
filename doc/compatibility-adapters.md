@@ -286,7 +286,7 @@ builder := compat.NewBuilder().
         "format=txt",              // Human-readable
         "level=-4",                // Debug level
         "trace_depth=3",           // Include traces
-        "enable_stdout=true",      // Console output
+        "enable_console=true",      // Console output
         "flush_interval_ms=50",    // Quick feedback
     )
 ```
@@ -297,7 +297,7 @@ builder := compat.NewBuilder().
 builder := compat.NewBuilder().
     WithOptions(
         "disable_file=true",       // No files
-        "enable_stdout=true",      // Console only
+        "enable_console=true",      // Console only
         "format=json",             // For aggregators
         "level=0",                 // Info and above
     )

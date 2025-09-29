@@ -20,7 +20,7 @@ func TestBuilder_Build(t *testing.T) {
 			LevelString("debug").
 			Format("json").
 			BufferSize(2048).
-			EnableStdout(true).
+			EnableConsole(true).
 			MaxSizeMB(10).
 			HeartbeatLevel(2).
 			Build()
@@ -43,7 +43,7 @@ func TestBuilder_Build(t *testing.T) {
 		assert.Equal(t, LevelDebug, cfg.Level)
 		assert.Equal(t, "json", cfg.Format)
 		assert.Equal(t, int64(2048), cfg.BufferSize)
-		assert.True(t, cfg.EnableStdout, "EnableStdout should be true")
+		assert.True(t, cfg.EnableConsole, "EnableConsole should be true")
 		assert.Equal(t, int64(10*1000), cfg.MaxSizeKB)
 		assert.Equal(t, int64(2), cfg.HeartbeatLevel)
 	})

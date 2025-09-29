@@ -430,9 +430,9 @@ func (l *Logger) applyConfig(cfg *Config) error {
 	}
 
 	// Setup stdout writer based on config
-	if cfg.EnableStdout {
+	if cfg.EnableConsole {
 		var writer io.Writer
-		if cfg.StdoutTarget == "stderr" {
+		if cfg.ConsoleTarget == "stderr" {
 			writer = os.Stderr
 		} else {
 			writer = os.Stdout

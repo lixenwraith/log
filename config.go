@@ -46,9 +46,9 @@ type Config struct {
 	HeartbeatIntervalS int64 `toml:"heartbeat_interval_s"` // Interval seconds for heartbeat
 
 	// Stdout/console output settings
-	EnableStdout bool   `toml:"enable_stdout"` // Mirror logs to stdout/stderr
-	StdoutTarget string `toml:"stdout_target"` // "stdout" or "stderr"
-	DisableFile  bool   `toml:"disable_file"`  // Disable file output entirely
+	EnableConsole bool   `toml:"enable_console"` // Mirror logs to stdout/stderr
+	ConsoleTarget string `toml:"console_target"` // "stdout" or "stderr"
+	DisableFile   bool   `toml:"disable_file"`   // Disable file output entirely
 
 	// Internal error handling
 	InternalErrorsToStderr bool `toml:"internal_errors_to_stderr"` // Write internal errors to stderr
@@ -92,9 +92,9 @@ var defaultConfig = Config{
 	HeartbeatIntervalS: 60,
 
 	// Stdout settings
-	EnableStdout: false,
-	StdoutTarget: "stdout",
-	DisableFile:  false,
+	EnableConsole: false,
+	ConsoleTarget: "stdout",
+	DisableFile:   false,
 
 	// Internal error handling
 	InternalErrorsToStderr: false,
@@ -131,8 +131,8 @@ func (c *Config) Validate() error {
 		return fmtErrorf("timestamp_format cannot be empty")
 	}
 
-	if c.StdoutTarget != "stdout" && c.StdoutTarget != "stderr" && c.StdoutTarget != "split" {
-		return fmtErrorf("invalid stdout_target: '%s' (use stdout, stderr, or split)", c.StdoutTarget)
+	if c.ConsoleTarget != "stdout" && c.ConsoleTarget != "stderr" && c.ConsoleTarget != "split" {
+		return fmtErrorf("invalid console_target: '%s' (use stdout, stderr, or split)", c.ConsoleTarget)
 	}
 
 	// Numeric validations
@@ -315,15 +315,15 @@ func applyConfigField(cfg *Config, key, value string) error {
 		}
 		cfg.HeartbeatIntervalS = intVal
 
-	// Stdout/console output settings
-	case "enable_stdout":
+	// Console output settings
+	case "enable_console":
 		boolVal, err := strconv.ParseBool(value)
 		if err != nil {
-			return fmtErrorf("invalid boolean value for enable_stdout '%s': %w", value, err)
+			return fmtErrorf("invalid boolean value for enable_console '%s': %w", value, err)
 		}
-		cfg.EnableStdout = boolVal
-	case "stdout_target":
-		cfg.StdoutTarget = value
+		cfg.EnableConsole = boolVal
+	case "console_target":
+		cfg.ConsoleTarget = value
 	case "disable_file":
 		boolVal, err := strconv.ParseBool(value)
 		if err != nil {
