@@ -19,6 +19,8 @@ func createTestLogger(t *testing.T) (*Logger, string) {
 	logger := NewLogger()
 
 	cfg := DefaultConfig()
+	cfg.EnableConsole = false
+	cfg.EnableFile = true
 	cfg.Directory = tmpDir
 	cfg.BufferSize = 100
 	cfg.FlushIntervalMs = 10
@@ -90,12 +92,12 @@ func TestApplyConfigString(t *testing.T) {
 			name: "boolean values",
 			configString: []string{
 				"enable_console=true",
-				"disable_file=false",
+				"enable_file=true",
 				"show_timestamp=false",
 			},
 			verify: func(t *testing.T, cfg *Config) {
 				assert.True(t, cfg.EnableConsole)
-				assert.False(t, cfg.DisableFile)
+				assert.True(t, cfg.EnableFile)
 				assert.False(t, cfg.ShowTimestamp)
 			},
 		},
@@ -266,7 +268,7 @@ func TestLoggerStdoutMirroring(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Directory = t.TempDir()
 	cfg.EnableConsole = true
-	cfg.DisableFile = true
+	cfg.EnableFile = false
 
 	err := logger.ApplyConfig(cfg)
 	require.NoError(t, err)

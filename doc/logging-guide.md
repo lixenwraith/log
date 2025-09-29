@@ -135,6 +135,8 @@ Default format for development and debugging:
 2024-01-15T10:30:45.234567890Z WARN Rate limit approaching user_id=42 requests=95 limit=100
 ```
 
+Note: The text format does not add quotes around string values containing spaces. This ensures predictability for simple, space-delimited parsing tools. For logs where maintaining the integrity of such values is critical, `json` format is recommended.
+
 Configuration:
 ```go
 logger.ApplyConfigString(

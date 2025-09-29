@@ -20,17 +20,17 @@ All builder methods return `*ConfigBuilder` for chaining. Errors are accumulated
 
 ### Common Methods
 
-| Method | Parameters | Description |
-|--------|------------|-------------|
-| `Level(level int64)` | `level`: Numeric log level | Sets log level (-4 to 8) |
-| `LevelString(level string)` | `level`: Named level | Sets level by name ("debug", "info", etc.) |
-| `Directory(dir string)` | `dir`: Path | Sets log directory |
-| `Format(format string)` | `format`: Output format | Sets format ("txt", "json", "raw") |
-| `BufferSize(size int64)` | `size`: Buffer size | Sets channel buffer size |
-| `MaxSizeKB(size int64)` | `size`: Size in MB | Sets max file size |
-| `EnableConsole(enable bool)` | `enable`: Boolean | Enables console output |
-| `DisableFile(disable bool)` | `disable`: Boolean | Disables file output |
-| `HeartbeatLevel(level int64)` | `level`: 0-3 | Sets monitoring level |
+| Method                        | Parameters                 | Description                                |
+|-------------------------------|----------------------------|--------------------------------------------|
+| `Level(level int64)`          | `level`: Numeric log level | Sets log level (-4 to 8)                   |
+| `LevelString(level string)`   | `level`: Named level       | Sets level by name ("debug", "info", etc.) |
+| `Directory(dir string)`       | `dir`: Path                | Sets log directory                         |
+| `Format(format string)`       | `format`: Output format    | Sets format ("txt", "json", "raw")         |
+| `BufferSize(size int64)`      | `size`: Buffer size        | Sets channel buffer size                   |
+| `MaxSizeKB(size int64)`       | `size`: Size in MB         | Sets max file size                         |
+| `EnableConsole(enable bool)`  | `enable`: Boolean          | Enables console output                     |
+| `EnableFile(enable bool)`     | `enable`: Boolean          | Enable file output                         |
+| `HeartbeatLevel(level int64)` | `level`: 0-3               | Sets monitoring level                      |
 
 ## Build
 

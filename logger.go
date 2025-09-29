@@ -130,16 +130,14 @@ func (l *Logger) Start() error {
 		l.state.ProcessorExited.Store(false)
 		go l.processLogs(logChannel)
 
-		// Log startup if file output enabled
-		if !cfg.DisableFile {
-			startRecord := logRecord{
-				Flags:     FlagDefault,
-				TimeStamp: time.Now(),
-				Level:     LevelInfo,
-				Args:      []any{"Logger started"},
-			}
-			l.sendLogRecord(startRecord)
+		// Log startup
+		startRecord := logRecord{
+			Flags:     FlagDefault,
+			TimeStamp: time.Now(),
+			Level:     LevelInfo,
+			Args:      []any{"Logger started"},
 		}
+		l.sendLogRecord(startRecord)
 	}
 
 	return nil
@@ -358,11 +356,13 @@ func (l *Logger) applyConfig(cfg *Config) error {
 
 	l.serializer.setTimestampFormat(cfg.TimestampFormat)
 
-	// Ensure log directory exists
-	if err := os.MkdirAll(cfg.Directory, 0755); err != nil {
-		l.state.LoggerDisabled.Store(true)
-		l.currentConfig.Store(oldCfg) // Rollback
-		return fmtErrorf("failed to create log directory '%s': %w", cfg.Directory, err)
+	// Ensure log directory exists if file output is enabled
+	if cfg.EnableFile {
+		if err := os.MkdirAll(cfg.Directory, 0755); err != nil {
+			l.state.LoggerDisabled.Store(true)
+			l.currentConfig.Store(oldCfg) // Rollback
+			return fmtErrorf("failed to create log directory '%s': %w", cfg.Directory, err)
+		}
 	}
 
 	// Get current state
@@ -394,7 +394,7 @@ func (l *Logger) applyConfig(cfg *Config) error {
 		oldCfg.Extension != cfg.Extension
 
 	// Handle file state transitions
-	if cfg.DisableFile {
+	if !cfg.EnableFile {
 		// When disabling file output, close the current file
 		if currentFile != nil {
 			// Sync and close the file
@@ -429,7 +429,7 @@ func (l *Logger) applyConfig(cfg *Config) error {
 		}
 	}
 
-	// Setup stdout writer based on config
+	// Setup console writer based on config
 	if cfg.EnableConsole {
 		var writer io.Writer
 		if cfg.ConsoleTarget == "stderr" {

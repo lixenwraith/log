@@ -56,13 +56,13 @@ logger.Info("info txt log record written to /var/log/myapp.txt")
 
 ### Output Control
 
-| Parameter | Type | Description | Default |
-|-----------|------|-------------|---------|
-| `show_timestamp` | `bool` | Include timestamps in log entries | `true` |
-| `show_level` | `bool` | Include log level in entries | `true` |
-| `enable_console` | `bool` | Mirror logs to stdout/stderr | `false` |
+| Parameter        | Type | Description                                          | Default    |
+|------------------|------|------------------------------------------------------|------------|
+| `show_timestamp` | `bool` | Include timestamps in log entries                    | `true`     |
+| `show_level`     | `bool` | Include log level in entries                         | `true`     |
+| `enable_console` | `bool` | Enable console output (stdout/stderr)                | `true`     |
 | `console_target` | `string` | Console target: `"stdout"`, `"stderr"`, or `"split"` | `"stdout"` |
-| `disable_file` | `bool` | Disable file output (console-only) | `false` |
+| `enable_file`    | `bool` | Enable file output (console-only)                    | `true`     |
 
 **Note:** When `console_target="split"`, INFO/DEBUG logs go to stdout while WARN/ERROR logs go to stderr.
 

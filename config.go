@@ -10,6 +10,11 @@ import (
 
 // Config holds all logger configuration values
 type Config struct {
+	// File and Console output settings
+	EnableConsole bool   `toml:"enable_console"` // Enable console output (stdout/stderr)
+	ConsoleTarget string `toml:"console_target"` // "stdout", "stderr", or "split"
+	EnableFile    bool   `toml:"enable_file"`    // Enable file output
+
 	// Basic settings
 	Level     int64  `toml:"level"`
 	Name      string `toml:"name"` // Base name for log files
@@ -45,18 +50,18 @@ type Config struct {
 	HeartbeatLevel     int64 `toml:"heartbeat_level"`      // 0=disabled, 1=proc only, 2=proc+disk, 3=proc+disk+sys
 	HeartbeatIntervalS int64 `toml:"heartbeat_interval_s"` // Interval seconds for heartbeat
 
-	// Stdout/console output settings
-	EnableConsole bool   `toml:"enable_console"` // Mirror logs to stdout/stderr
-	ConsoleTarget string `toml:"console_target"` // "stdout" or "stderr"
-	DisableFile   bool   `toml:"disable_file"`   // Disable file output entirely
-
 	// Internal error handling
 	InternalErrorsToStderr bool `toml:"internal_errors_to_stderr"` // Write internal errors to stderr
 }
 
 // defaultConfig is the single source for all configurable default values
 var defaultConfig = Config{
-	// Basic settings
+	// Output settings
+	EnableConsole: true,
+	ConsoleTarget: "stdout",
+	EnableFile:    true,
+
+	// File settings
 	Level:     LevelInfo,
 	Name:      "log",
 	Directory: "./log",
@@ -90,11 +95,6 @@ var defaultConfig = Config{
 	// Heartbeat settings
 	HeartbeatLevel:     0,
 	HeartbeatIntervalS: 60,
-
-	// Stdout settings
-	EnableConsole: false,
-	ConsoleTarget: "stdout",
-	DisableFile:   false,
 
 	// Internal error handling
 	InternalErrorsToStderr: false,
@@ -324,12 +324,12 @@ func applyConfigField(cfg *Config, key, value string) error {
 		cfg.EnableConsole = boolVal
 	case "console_target":
 		cfg.ConsoleTarget = value
-	case "disable_file":
+	case "enable_file":
 		boolVal, err := strconv.ParseBool(value)
 		if err != nil {
-			return fmtErrorf("invalid boolean value for disable_file '%s': %w", value, err)
+			return fmtErrorf("invalid boolean value for enable_file '%s': %w", value, err)
 		}
-		cfg.DisableFile = boolVal
+		cfg.EnableFile = boolVal
 
 	// Internal error handling
 	case "internal_errors_to_stderr":
@@ -354,7 +354,7 @@ func configRequiresRestart(oldCfg, newCfg *Config) bool {
 	}
 
 	// File output changes require restart
-	if oldCfg.DisableFile != newCfg.DisableFile {
+	if oldCfg.EnableFile != newCfg.EnableFile {
 		return true
 	}
 

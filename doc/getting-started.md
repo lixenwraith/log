@@ -29,7 +29,7 @@ import (
 
 func main() {
     // Create a new logger instance with default configuration
-    // Writes to file ./log/log.log
+    // Writes to both console (stdout) and file ./log/log.log
     logger := log.NewLogger()
     defer logger.Shutdown()
 	

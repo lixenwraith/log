@@ -219,19 +219,6 @@ func (s *serializer) writeTextValue(v any) {
 	switch val := v.(type) {
 	case string:
 		s.buf = append(s.buf, val...)
-
-		// // TODO: Make configurable or remove after analyzing use cases
-		// // json handles string quotes
-		// // txt format behavior may be unexpected with surrounding quotes,
-		// // causing issues with automatic log parsers and complicates regex processing
-		// if len(val) == 0 || strings.ContainsRune(val, ' ') {
-		// 	s.buf = append(s.buf, '"')
-		// 	s.writeString(val)
-		// 	s.buf = append(s.buf, '"')
-		// } else {
-		// 	s.buf = append(s.buf, val...)
-		// }
-
 	case int:
 		s.buf = strconv.AppendInt(s.buf, int64(val), 10)
 	case int64:

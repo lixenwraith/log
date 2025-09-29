@@ -15,8 +15,8 @@ import (
 func (l *Logger) performSync() {
 	c := l.getConfig()
 	// Skip sync if file output is disabled
-	disableFile := c.DisableFile
-	if disableFile {
+	enableFile := c.EnableFile
+	if !enableFile {
 		return
 	}
 
@@ -42,8 +42,8 @@ func (l *Logger) performSync() {
 func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 	c := l.getConfig()
 	// Skip all disk checks if file output is disabled
-	disableFile := c.DisableFile
-	if disableFile {
+	enableFile := c.EnableFile
+	if !enableFile {
 		// Always return OK status when file output is disabled
 		if !l.state.DiskStatusOK.Load() {
 			l.state.DiskStatusOK.Store(true)
@@ -130,26 +130,6 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 		}
 		return true
 	}
-
-	// TODO: add logic to drain channel if disk gets full
-	// needs logic for wasOK and doc update
-	// if !l.state.DiskStatusOK.Load() && wasOK {
-	// 	// Drain pending logs to prevent writes
-	// 	ch := l.getCurrentLogChannel()
-	// 	drained := 0
-	// drainLoop:
-	// 	for {
-	// 		select {
-	// 		case <-ch:
-	// 			drained++
-	// 		default:
-	// 			break drainLoop
-	// 		}
-	// 	}
-	// 	if drained > 0 {
-	// 		l.state.DroppedLogs.Add(uint64(drained))
-	// 	}
-	// }
 }
 
 // getDiskFreeSpace retrieves available disk space for the given path

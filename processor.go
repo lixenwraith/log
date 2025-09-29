@@ -18,7 +18,7 @@ func (l *Logger) processLogs(ch <-chan logRecord) {
 	c := l.getConfig()
 
 	// Perform an initial disk check on startup (skip if file output is disabled)
-	if !c.DisableFile {
+	if c.EnableFile {
 		l.performDiskCheck(true)
 	}
 
@@ -94,8 +94,8 @@ func (l *Logger) processLogs(ch <-chan logRecord) {
 // processLogRecord handles individual log records, returning bytes written
 func (l *Logger) processLogRecord(record logRecord) int64 {
 	c := l.getConfig()
-	disableFile := c.DisableFile
-	if !disableFile && !l.state.DiskStatusOK.Load() {
+	enableFile := c.EnableFile
+	if enableFile && !l.state.DiskStatusOK.Load() {
 		// Simple increment of both counters
 		l.state.DroppedLogs.Add(1)
 		l.state.TotalDroppedLogs.Add(1)
@@ -114,7 +114,7 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 	)
 	dataLen := int64(len(data))
 
-	// Mirror to stdout if enabled
+	// Write to console if enabled
 	enableConsole := c.EnableConsole
 	if enableConsole {
 		if s := l.state.StdoutWriter.Load(); s != nil {
@@ -137,7 +137,7 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 	}
 
 	// Skip file operations if file output is disabled
-	if disableFile {
+	if !enableFile {
 		l.state.TotalLogsProcessed.Add(1)
 		return dataLen // Return data length for adaptive interval calculations
 	}

@@ -94,9 +94,9 @@ func (b *Builder) MaxSizeMB(size int64) *Builder {
 	return b
 }
 
-// DisableFile disables file output entirely.
-func (b *Builder) DisableFile(disable bool) *Builder {
-	b.cfg.DisableFile = disable
+// EnableFile enables file output.
+func (b *Builder) EnableFile(enable bool) *Builder {
+	b.cfg.EnableFile = enable
 	return b
 }
 
@@ -220,7 +220,7 @@ func (b *Builder) InternalErrorsToStderr(enable bool) *Builder {
 	return b
 }
 
-// EnableConsole enables mirroring logs to console.
+// EnableConsole enables console output.
 func (b *Builder) EnableConsole(enable bool) *Builder {
 	b.cfg.EnableConsole = enable
 	return b

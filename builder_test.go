@@ -21,6 +21,7 @@ func TestBuilder_Build(t *testing.T) {
 			Format("json").
 			BufferSize(2048).
 			EnableConsole(true).
+			EnableFile(true).
 			MaxSizeMB(10).
 			HeartbeatLevel(2).
 			Build()
