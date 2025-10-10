@@ -179,7 +179,7 @@ func TestLoggerFormats(t *testing.T) {
 		check  func(t *testing.T, content string)
 	}{
 		{
-			name:   "text format",
+			name:   "txt format",
 			format: "txt",
 			check: func(t *testing.T, content string) {
 				assert.Contains(t, content, "INFO test message")

@@ -32,7 +32,7 @@ func (s *serializer) reset() {
 	s.buf = s.buf[:0]
 }
 
-// serialize converts log entries to the configured format, JSON, raw, or (default) text.
+// serialize converts log entries to the configured format, JSON, raw, or (default) txt.
 func (s *serializer) serialize(format string, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
 	s.reset()
 
@@ -54,7 +54,7 @@ func (s *serializer) serialize(format string, flags int64, timestamp time.Time, 
 	if format == "json" {
 		return s.serializeJSON(flags, timestamp, level, trace, args)
 	}
-	return s.serializeText(flags, timestamp, level, trace, args)
+	return s.serializeTxt(flags, timestamp, level, trace, args)
 }
 
 // serializeRaw formats args as space-separated strings without metadata or newline.
@@ -177,8 +177,8 @@ func (s *serializer) serializeJSON(flags int64, timestamp time.Time, level int64
 	return s.buf
 }
 
-// serializeText formats log entries as plain text (time, level, trace, fields).
-func (s *serializer) serializeText(flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
+// serializeTxt formats log entries as plain txt (time, level, trace, fields).
+func (s *serializer) serializeTxt(flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
 	needsSpace := false
 
 	if flags&FlagShowTimestamp != 0 {
@@ -206,7 +206,7 @@ func (s *serializer) serializeText(flags int64, timestamp time.Time, level int64
 		if needsSpace {
 			s.buf = append(s.buf, ' ')
 		}
-		s.writeTextValue(arg)
+		s.writeTxtValue(arg)
 		needsSpace = true
 	}
 
@@ -214,8 +214,8 @@ func (s *serializer) serializeText(flags int64, timestamp time.Time, level int64
 	return s.buf
 }
 
-// writeTextValue converts any value to its text representation.
-func (s *serializer) writeTextValue(v any) {
+// writeTxtValue converts any value to its txt representation.
+func (s *serializer) writeTxtValue(v any) {
 	switch val := v.(type) {
 	case string:
 		s.buf = append(s.buf, val...)

@@ -16,7 +16,7 @@ func TestSerializer(t *testing.T) {
 	s := newSerializer()
 	timestamp := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 
-	t.Run("text format", func(t *testing.T) {
+	t.Run("txt format", func(t *testing.T) {
 		data := s.serialize("txt", FlagDefault, timestamp, LevelInfo, "", []any{"test message", 123})
 		str := string(data)
 
