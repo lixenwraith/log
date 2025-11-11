@@ -11,11 +11,11 @@ The `compat` package provides adapters that allow the lixenwraith/log logger to 
 
 ### Features
 
-- ✅ Full interface compatibility
-- ✅ Preserves structured logging
-- ✅ Configurable behavior
-- ✅ Shared logger instances
-- ✅ Optional field extraction
+- Full interface compatibility
+- Preserves structured logging
+- Configurable behavior
+- Shared logger instances
+- Optional field extraction
 
 ## gnet Adapter
 
@@ -188,6 +188,7 @@ logger := log.NewLogger()
 cfg := log.DefaultConfig()
 cfg.Level = log.LevelDebug
 logger.ApplyConfig(cfg)
+logger.Start()
 defer logger.Shutdown()
 
 // Create builder with existing logger
@@ -195,7 +196,10 @@ builder := compat.NewBuilder().WithLogger(logger)
 
 // Build adapters
 gnetAdapter, _ := builder.BuildGnet()
+if err != nil { return err }
+
 fasthttpAdapter, _ := builder.BuildFastHTTP()
+if err != nil { return err }
 ```
 
 ### Creating New Logger
@@ -210,6 +214,7 @@ builder := compat.NewBuilder().WithConfig(cfg)
 
 // Option 2: Default config (created on first build)
 builder := compat.NewBuilder()
+if err != nil { return err }
 
 // Build adapters
 gnetAdapter, _ := builder.BuildGnet()
@@ -261,63 +266,6 @@ adapter.Infof("Connected to server")
 // → {"msg": "Connected to server"}
 ```
 
-## Example Configuration
-
-### High-Performance Setup
-
-```go
-builder := compat.NewBuilder().
-    WithOptions(
-        "directory=/var/log/highperf",
-        "format=json",
-        "buffer_size=8192",           // Large buffer
-        "flush_interval_ms=1000",     // Batch writes
-        "enable_periodic_sync=false", // Reduce I/O
-        "heartbeat_level=1",          // Monitor drops
-    )
-```
-
-### Development Setup
-
-```go
-builder := compat.NewBuilder().
-    WithOptions(
-        "directory=./log",
-        "format=txt",              // Human-readable
-        "level=-4",                // Debug level
-        "trace_depth=3",           // Include traces
-        "enable_console=true",     // Console output
-        "flush_interval_ms=50",    // Quick feedback
-    )
-```
-
-### Container Setup
-
-```go
-builder := compat.NewBuilder().
-    WithOptions(
-        "enable_file=false",       // No files
-        "enable_console=true",     // Console only
-        "format=json",             // For aggregators
-        "level=0",                 // Info and above
-    )
-```
-
-### Helper Functions
-
-Configure servers with adapters:
-
-```go
-// Simple integration
-logger := log.NewLogger()
-
-builder := compat.NewBuilder().WithLogger(logger)
-gnetAdapter, _ := builder.BuildGnet()
-
-gnet.Run(handler, "tcp://127.0.0.1:9000",
-    gnet.WithLogger(gnetAdapter))
-```
-
 ### Integration Examples
 
 #### Microservice with Both Frameworks
@@ -330,41 +278,40 @@ type Service struct {
 }
 
 func NewService() (*Service, error) {
-    builder := compat.NewBuilder().
-        WithOptions(
-            "directory=/var/log/service",
-            "format=json",
-            "heartbeat_level=2",
-        )
-    
-    gnet, fasthttp, err := builder.Build()
-    if err != nil {
+    // Create and configure logger
+    logger := log.NewLogger()
+    cfg := log.DefaultConfig()
+    cfg.Directory = "/var/log/service"
+    cfg.Format = "json"
+    cfg.HeartbeatLevel = 2
+    if err := logger.ApplyConfig(cfg); err != nil {
         return nil, err
     }
-    
-    return &Service{
-        gnetAdapter:     gnet,
-        fasthttpAdapter: fasthttp,
-        logger:         builder.GetLogger(),
-    }, nil
-}
-
-func (s *Service) StartTCPServer() error {
-    return gnet.Run(handler, "tcp://0.0.0.0:9000",
-        gnet.WithLogger(s.gnetAdapter),
-    )
-}
-
-func (s *Service) StartHTTPServer() error {
-    server := &fasthttp.Server{
-        Handler: s.handleHTTP,
-        Logger:  s.fasthttpAdapter,
+    if err := logger.Start(); err != nil {
+        return nil, err
     }
-    return server.ListenAndServe(":8080")
-}
 
-func (s *Service) Shutdown() error {
-    return s.logger.Shutdown(5 * time.Second)
+    // Create builder with the logger
+    builder := compat.NewBuilder().WithLogger(logger)
+
+    // Build adapters
+    gnetAdapter, err := builder.BuildGnet()
+    if err != nil {
+        logger.Shutdown()
+        return nil, err
+    }
+
+    fasthttpAdapter, err := builder.BuildFastHTTP()
+    if err != nil {
+        logger.Shutdown()
+        return nil, err
+    }
+
+    return &Service{
+        gnetAdapter:     gnetAdapter,
+        fasthttpAdapter: fasthttpAdapter,
+        logger:          logger,
+    }, nil
 }
 ```
 
@@ -405,5 +352,4 @@ func requestLogger(adapter *compat.FastHTTPAdapter) fasthttp.RequestHandler {
 ```
 
 ---
-
 [← Heartbeat Monitoring](heartbeat-monitoring.md) | [← Back to README](../README.md)

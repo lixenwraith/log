@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestSerializer tests the output of the serializer for txt, json, and raw formats
 func TestSerializer(t *testing.T) {
 	s := newSerializer()
 	timestamp := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -30,13 +31,13 @@ func TestSerializer(t *testing.T) {
 	t.Run("json format", func(t *testing.T) {
 		data := s.serialize("json", FlagDefault, timestamp, LevelWarn, "trace1", []any{"warning", true})
 
-		var result map[string]interface{}
+		var result map[string]any
 		err := json.Unmarshal(data[:len(data)-1], &result) // Remove trailing newline
 		require.NoError(t, err)
 
 		assert.Equal(t, "WARN", result["level"])
 		assert.Equal(t, "trace1", result["trace"])
-		fields := result["fields"].([]interface{})
+		fields := result["fields"].([]any)
 		assert.Equal(t, "warning", fields[0])
 		assert.Equal(t, true, fields[1])
 	})
@@ -61,12 +62,12 @@ func TestSerializer(t *testing.T) {
 		data := s.serialize("json", FlagStructuredJSON|FlagDefault, timestamp, LevelInfo, "",
 			[]any{"structured message", fields})
 
-		var result map[string]interface{}
+		var result map[string]any
 		err := json.Unmarshal(data[:len(data)-1], &result)
 		require.NoError(t, err)
 
 		assert.Equal(t, "structured message", result["message"])
-		assert.Equal(t, map[string]interface{}{"key1": "value1", "key2": float64(42)}, result["fields"])
+		assert.Equal(t, map[string]any{"key1": "value1", "key2": float64(42)}, result["fields"])
 	})
 
 	t.Run("special characters escaping", func(t *testing.T) {
@@ -86,6 +87,7 @@ func TestSerializer(t *testing.T) {
 	})
 }
 
+// TestLevelToString verifies the conversion of log level constants to strings
 func TestLevelToString(t *testing.T) {
 	tests := []struct {
 		level    int64

@@ -71,8 +71,8 @@ func (l *Logger) ApplyConfig(cfg *Config) error {
 	return l.applyConfig(cfg)
 }
 
-// ApplyConfigString applies string key-value overrides to the logger's current configuration.
-// Each override should be in the format "key=value".
+// ApplyConfigString applies string key-value overrides to the logger's current configuration
+// Each override should be in the format "key=value"
 func (l *Logger) ApplyConfigString(overrides ...string) error {
 	cfg := l.getConfig().Clone()
 
@@ -102,8 +102,8 @@ func (l *Logger) GetConfig() *Config {
 	return l.getConfig().Clone()
 }
 
-// Start begins log processing. Safe to call multiple times.
-// Returns error if logger is not initialized.
+// Start begins log processing. Safe to call multiple times
+// Returns error if logger is not initialized
 func (l *Logger) Start() error {
 	if !l.state.IsInitialized.Load() {
 		return fmtErrorf("logger not initialized, call ApplyConfig first")
@@ -129,22 +129,13 @@ func (l *Logger) Start() error {
 		// Start processor
 		l.state.ProcessorExited.Store(false)
 		go l.processLogs(logChannel)
-
-		// Log startup
-		startRecord := logRecord{
-			Flags:     FlagDefault,
-			TimeStamp: time.Now(),
-			Level:     LevelInfo,
-			Args:      []any{"Logger started"},
-		}
-		l.sendLogRecord(startRecord)
 	}
 
 	return nil
 }
 
-// Stop halts log processing. Can be restarted with Start().
-// Returns nil if already stopped.
+// Stop halts log processing. Can be restarted with Start()
+// Returns nil if already stopped
 func (l *Logger) Stop(timeout ...time.Duration) error {
 	if !l.state.Started.CompareAndSwap(true, false) {
 		return nil // Already stopped
@@ -233,7 +224,7 @@ func (l *Logger) Shutdown(timeout ...time.Duration) error {
 	return finalErr
 }
 
-// Flush explicitly triggers a sync of the current log file buffer to disk and waits for completion or timeout.
+// Flush explicitly triggers a sync of the current log file buffer to disk and waits for completion or timeout
 func (l *Logger) Flush(timeout time.Duration) error {
 	l.state.flushMutex.Lock()
 	defer l.state.flushMutex.Unlock()
@@ -265,69 +256,69 @@ func (l *Logger) Flush(timeout time.Duration) error {
 	}
 }
 
-// Debug logs a message at debug level.
+// Debug logs a message at debug level
 func (l *Logger) Debug(args ...any) {
 	flags := l.getFlags()
 	cfg := l.getConfig()
 	l.log(flags, LevelDebug, cfg.TraceDepth, args...)
 }
 
-// Info logs a message at info level.
+// Info logs a message at info level
 func (l *Logger) Info(args ...any) {
 	flags := l.getFlags()
 	cfg := l.getConfig()
 	l.log(flags, LevelInfo, cfg.TraceDepth, args...)
 }
 
-// Warn logs a message at warning level.
+// Warn logs a message at warning level
 func (l *Logger) Warn(args ...any) {
 	flags := l.getFlags()
 	cfg := l.getConfig()
 	l.log(flags, LevelWarn, cfg.TraceDepth, args...)
 }
 
-// Error logs a message at error level.
+// Error logs a message at error level
 func (l *Logger) Error(args ...any) {
 	flags := l.getFlags()
 	cfg := l.getConfig()
 	l.log(flags, LevelError, cfg.TraceDepth, args...)
 }
 
-// DebugTrace logs a debug message with function call trace.
+// DebugTrace logs a debug message with function call trace
 func (l *Logger) DebugTrace(depth int, args ...any) {
 	flags := l.getFlags()
 	l.log(flags, LevelDebug, int64(depth), args...)
 }
 
-// InfoTrace logs an info message with function call trace.
+// InfoTrace logs an info message with function call trace
 func (l *Logger) InfoTrace(depth int, args ...any) {
 	flags := l.getFlags()
 	l.log(flags, LevelInfo, int64(depth), args...)
 }
 
-// WarnTrace logs a warning message with function call trace.
+// WarnTrace logs a warning message with function call trace
 func (l *Logger) WarnTrace(depth int, args ...any) {
 	flags := l.getFlags()
 	l.log(flags, LevelWarn, int64(depth), args...)
 }
 
-// ErrorTrace logs an error message with function call trace.
+// ErrorTrace logs an error message with function call trace
 func (l *Logger) ErrorTrace(depth int, args ...any) {
 	flags := l.getFlags()
 	l.log(flags, LevelError, int64(depth), args...)
 }
 
-// Log writes a timestamp-only record without level information.
+// Log writes a timestamp-only record without level information
 func (l *Logger) Log(args ...any) {
 	l.log(FlagShowTimestamp, LevelInfo, 0, args...)
 }
 
-// Message writes a plain record without timestamp or level info.
+// Message writes a plain record without timestamp or level info
 func (l *Logger) Message(args ...any) {
 	l.log(0, LevelInfo, 0, args...)
 }
 
-// LogTrace writes a timestamp record with call trace but no level info.
+// LogTrace writes a timestamp record with call trace but no level info
 func (l *Logger) LogTrace(depth int, args ...any) {
 	l.log(FlagShowTimestamp, LevelInfo, int64(depth), args...)
 }
@@ -337,8 +328,8 @@ func (l *Logger) LogStructured(level int64, message string, fields map[string]an
 	l.log(l.getFlags()|FlagStructuredJSON, level, 0, []any{message, fields})
 }
 
-// Write outputs raw, unformatted data regardless of configured format.
-// Writes args as space-separated strings without a trailing newline.
+// Write outputs raw, unformatted data regardless of configured format
+// Writes args as space-separated strings without a trailing newline
 func (l *Logger) Write(args ...any) {
 	l.log(FlagRaw, LevelInfo, 0, args...)
 }
@@ -348,8 +339,7 @@ func (l *Logger) getConfig() *Config {
 	return l.currentConfig.Load().(*Config)
 }
 
-// apply applies a validated configuration and reconfigures logger components
-// Assumes initMu is held
+// applyConfig is the internal implementation for applying configuration, assuming initMu is held
 func (l *Logger) applyConfig(cfg *Config) error {
 	oldCfg := l.getConfig()
 	l.currentConfig.Store(cfg)

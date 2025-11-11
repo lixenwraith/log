@@ -102,5 +102,4 @@ logger.Info("info txt log record written to /var/log/myapp.txt")
 | `heartbeat_interval_s` | `int64` | Heartbeat interval (seconds) | `60` |
 
 ---
-
 [← Getting Started](getting-started.md) | [← Back to README](../README.md) | [Configuration Builder →](config-builder.md)

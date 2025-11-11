@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestFullLifecycle performs an end-to-end test of creating, configuring, and using the logger
 func TestFullLifecycle(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -30,7 +31,7 @@ func TestFullLifecycle(t *testing.T) {
 	require.NoError(t, err, "Logger creation with builder should succeed")
 	require.NotNil(t, logger)
 
-	// Start the logger before use.
+	// Start the logger before use
 	err = logger.Start()
 	require.NoError(t, err)
 
@@ -79,6 +80,7 @@ func TestFullLifecycle(t *testing.T) {
 	assert.GreaterOrEqual(t, len(files), 1, "At least one log file should be created")
 }
 
+// TestConcurrentOperations tests the logger's stability under concurrent logging and reconfigurations
 func TestConcurrentOperations(t *testing.T) {
 	logger, _ := createTestLogger(t)
 	defer logger.Shutdown()
@@ -121,6 +123,7 @@ func TestConcurrentOperations(t *testing.T) {
 	wg.Wait()
 }
 
+// TestErrorRecovery tests the logger's behavior in failure scenarios
 func TestErrorRecovery(t *testing.T) {
 	t.Run("invalid directory", func(t *testing.T) {
 		// Use the builder to attempt creation with an invalid directory
@@ -157,7 +160,7 @@ func TestErrorRecovery(t *testing.T) {
 
 		var postDropped uint64
 		var success bool
-		// Poll for up to 500ms for the async processor to update the state.
+		// Poll for up to 500ms for the async processor to update the state
 		for i := 0; i < 50; i++ {
 			postDropped = logger.state.DroppedLogs.Load()
 			if postDropped > preDropped {

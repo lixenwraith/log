@@ -9,7 +9,7 @@ import (
 	"github.com/lixenwraith/log"
 )
 
-// GnetAdapter wraps lixenwraith/log.Logger to implement gnet's logging.Logger interface
+// GnetAdapter wraps lixenwraith/log.Logger to implement gnet logging.Logger interface
 type GnetAdapter struct {
 	logger       *log.Logger
 	fatalHandler func(msg string) // Customizable fatal behavior

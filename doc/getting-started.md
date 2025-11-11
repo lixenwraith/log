@@ -24,18 +24,32 @@ The logger follows an instance-based design. You create logger instances and cal
 package main
 
 import (
+	"fmt"
+    
     "github.com/lixenwraith/log"
 )
 
 func main() {
-    // Create a new logger instance with default configuration
-    // Writes to both console (stdout) and file ./log/log.log
-    logger := log.NewLogger()
+	// Create a new logger instance with default configuration
+	logger := log.NewLogger()
+
+	// Apply configuration
+	err := logger.ApplyConfigString("directory=/var/log/myapp")
+	if err != nil {
+		panic(fmt.Errorf("failed to apply logger config: %w", err))
+	}
     defer logger.Shutdown()
-	
+
+	// Start the logger (required before logging)
+	if err = logger.Start(); err != nil {
+		panic(fmt.Errorf("failed to start logger: %w", err))
+	}
+    
     // Start logging!
     logger.Info("Application started")
     logger.Debug("Debug mode enabled", "verbose", true)
+	logger.Warn("Warning message", "threshold", 0.95)
+	logger.Error("Error occurred", "code", 500)
 }
 ```
 
@@ -64,6 +78,8 @@ func NewService() (*Service, error) {
     ); err != nil {
         return nil, fmt.Errorf("logger init failed: %w", err)
     }
+	
+    logger.Start()
     
     return &Service{
         logger: logger,
@@ -101,5 +117,4 @@ func loggingMiddleware(logger *log.Logger) func(http.Handler) http.Handler {
 ```
 
 ---
-
 [← Back to README](../README.md) | [Configuration →](configuration.md)

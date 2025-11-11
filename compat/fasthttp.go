@@ -8,7 +8,7 @@ import (
 	"github.com/lixenwraith/log"
 )
 
-// FastHTTPAdapter wraps lixenwraith/log.Logger to implement fasthttp's Logger interface
+// FastHTTPAdapter wraps lixenwraith/log.Logger to implement fasthttp Logger interface
 type FastHTTPAdapter struct {
 	logger        *log.Logger
 	defaultLevel  int64

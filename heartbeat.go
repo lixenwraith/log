@@ -41,7 +41,7 @@ func (l *Logger) logProcHeartbeat() {
 	totalDropped := l.state.TotalDroppedLogs.Load()
 
 	// Atomically get and reset interval drops
-	// NOTE: If PROC heartbeat fails, interval drops are lost and total count tracks such fails
+	// If PROC heartbeat fails, interval drops are lost and total count tracks such fails
 	// Design choice is not to parse the heartbeat log record and restore the count
 	droppedInInterval := l.state.DroppedLogs.Swap(0)
 

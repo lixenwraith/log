@@ -91,7 +91,7 @@ func (l *Logger) processLogs(ch <-chan logRecord) {
 	}
 }
 
-// processLogRecord handles individual log records, returning bytes written
+// processLogRecord handles individual log records and returns bytes written
 func (l *Logger) processLogRecord(record logRecord) int64 {
 	c := l.getConfig()
 	enableFile := c.EnableFile

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestStartStopLifecycle verifies the logger can be started, stopped, and restarted
 func TestStartStopLifecycle(t *testing.T) {
 	logger, _ := createTestLogger(t) // Starts the logger by default
 
@@ -29,6 +30,7 @@ func TestStartStopLifecycle(t *testing.T) {
 	logger.Shutdown()
 }
 
+// TestStartAlreadyStarted verifies that starting an already started logger is a safe no-op
 func TestStartAlreadyStarted(t *testing.T) {
 	logger, _ := createTestLogger(t)
 	defer logger.Shutdown()
@@ -41,6 +43,7 @@ func TestStartAlreadyStarted(t *testing.T) {
 	assert.True(t, logger.state.Started.Load())
 }
 
+// TestStopAlreadyStopped verifies that stopping an already stopped logger is a safe no-op
 func TestStopAlreadyStopped(t *testing.T) {
 	logger, _ := createTestLogger(t)
 
@@ -57,6 +60,7 @@ func TestStopAlreadyStopped(t *testing.T) {
 	logger.Shutdown()
 }
 
+// TestStopReconfigureRestart tests reconfiguring a logger while it is stopped
 func TestStopReconfigureRestart(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := NewLogger()
@@ -100,6 +104,7 @@ func TestStopReconfigureRestart(t *testing.T) {
 	assert.Contains(t, strContent, `"fields":["second message"]`, "Should contain the log from the second (JSON) configuration")
 }
 
+// TestLoggingOnStoppedLogger ensures that log entries are dropped when the logger is stopped
 func TestLoggingOnStoppedLogger(t *testing.T) {
 	logger, tmpDir := createTestLogger(t)
 
@@ -124,6 +129,7 @@ func TestLoggingOnStoppedLogger(t *testing.T) {
 	assert.NotContains(t, string(content), "this should NOT be logged")
 }
 
+// TestFlushOnStoppedLogger verifies that Flush returns an error on a stopped logger
 func TestFlushOnStoppedLogger(t *testing.T) {
 	logger, _ := createTestLogger(t)
 
@@ -139,6 +145,7 @@ func TestFlushOnStoppedLogger(t *testing.T) {
 	logger.Shutdown()
 }
 
+// TestShutdownLifecycle checks the terminal state of the logger after shutdown
 func TestShutdownLifecycle(t *testing.T) {
 	logger, _ := createTestLogger(t)
 

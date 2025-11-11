@@ -10,7 +10,7 @@ import (
 )
 
 // parseFormat attempts to extract structured fields from printf-style format strings
-// This is useful for preserving structured logging semantics
+// Useful for preserving structured logging semantics
 func parseFormat(format string, args []any) []any {
 	// Pattern to detect common structured patterns like "key=%v" or "key: %v"
 	keyValuePattern := regexp.MustCompile(`(\w+)\s*[:=]\s*%[vsdqxXeEfFgGpbcU]`)

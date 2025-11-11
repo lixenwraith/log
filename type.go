@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// logRecord represents a single log entry.
+// logRecord represents a single log entry
 type logRecord struct {
 	Flags     int64
 	TimeStamp time.Time

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestLevel tests the conversion of level strings to their corresponding integer constants
 func TestLevel(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -41,6 +42,7 @@ func TestLevel(t *testing.T) {
 	}
 }
 
+// TestParseKeyValue verifies the parsing of "key=value" strings
 func TestParseKeyValue(t *testing.T) {
 	tests := []struct {
 		input     string
@@ -71,6 +73,7 @@ func TestParseKeyValue(t *testing.T) {
 	}
 }
 
+// TestFmtErrorf ensures that internal errors are correctly prefixed
 func TestFmtErrorf(t *testing.T) {
 	err := fmtErrorf("test error: %s", "details")
 	assert.Error(t, err)
@@ -81,6 +84,7 @@ func TestFmtErrorf(t *testing.T) {
 	assert.Equal(t, "log: already prefixed", err.Error())
 }
 
+// TestGetTrace checks the stack trace generation for various depths
 func TestGetTrace(t *testing.T) {
 	// Test various depths
 	tests := []struct {

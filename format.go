@@ -9,17 +9,18 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/davecgh/go-spew/spew"
 )
 
-// serializer manages the buffered writing of log entries.
+// serializer manages the buffered writing of log entries
 type serializer struct {
 	buf             []byte
 	timestampFormat string
 }
 
-// newSerializer creates a serializer instance.
+// newSerializer creates a serializer instance
 func newSerializer() *serializer {
 	return &serializer{
 		buf:             make([]byte, 0, 4096), // Initial reasonable capacity
@@ -27,12 +28,12 @@ func newSerializer() *serializer {
 	}
 }
 
-// reset clears the serializer buffer for reuse.
+// reset clears the serializer buffer for reuse
 func (s *serializer) reset() {
 	s.buf = s.buf[:0]
 }
 
-// serialize converts log entries to the configured format, JSON, raw, or (default) txt.
+// serialize converts log entries to the configured format, JSON, raw, or (default) txt
 func (s *serializer) serialize(format string, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
 	s.reset()
 
@@ -57,8 +58,8 @@ func (s *serializer) serialize(format string, flags int64, timestamp time.Time, 
 	return s.serializeTxt(flags, timestamp, level, trace, args)
 }
 
-// serializeRaw formats args as space-separated strings without metadata or newline.
-// This is used for both format="raw" configuration and Logger.Write() calls.
+// serializeRaw formats args as space-separated strings without metadata or newline
+// This is used for both format="raw" configuration and Logger.Write() calls
 func (s *serializer) serializeRaw(args []any) []byte {
 	needsSpace := false
 
@@ -74,12 +75,15 @@ func (s *serializer) serializeRaw(args []any) []byte {
 	return s.buf
 }
 
-// writeRawValue converts any value to its raw string representation.
-// fallback to go-spew/spew with data structure information for types that are not explicitly supported.
+// writeRawValue converts any value to its raw string representation
+// fallback to go-spew/spew with data structure information for types that are not explicitly supported
 func (s *serializer) writeRawValue(v any) {
 	switch val := v.(type) {
 	case string:
-		s.buf = append(s.buf, val...)
+		s.appendSanitized(val) // prevent special character corruption
+	case rune:
+		// Single rune should be sanitized if non-printable
+		s.appendSanitizedRune(val)
 	case int:
 		s.buf = strconv.AppendInt(s.buf, int64(val), 10)
 	case int64:
@@ -101,17 +105,17 @@ func (s *serializer) writeRawValue(v any) {
 	case error:
 		s.buf = append(s.buf, val.Error()...)
 	case fmt.Stringer:
-		s.buf = append(s.buf, val.String()...)
+		s.appendSanitized(val.String())
 	case []byte:
-		s.buf = hex.AppendEncode(s.buf, val) // prevent special character corruption
+		s.appendSanitized(string(val)) // prevent special character corruption
 	default:
-		// For all other types (structs, maps, pointers, arrays, etc.), delegate to spew.
-		// It is not the intended use of raw logging.
-		// The output of such cases are structured and have type and size information set by spew.
-		// Converting to string similar to non-raw logs is not used to avoid binary log corruption.
+		// For all other types (structs, maps, pointers, arrays, etc.), delegate to spew
+		// It is not the intended use of raw logging
+		// The output of such cases are structured and have type and size information set by spew
+		// Converting to string similar to non-raw logs is not used to avoid binary log corruption
 		var b bytes.Buffer
 
-		// Use a custom dumper for log-friendly, compact output.
+		// Use a custom dumper for log-friendly compact output
 		dumper := &spew.ConfigState{
 			Indent:                  " ",
 			MaxDepth:                10,
@@ -127,7 +131,7 @@ func (s *serializer) writeRawValue(v any) {
 	}
 }
 
-// serializeJSON formats log entries as JSON (time, level, trace, fields).
+// serializeJSON formats log entries as JSON (time, level, trace, fields)
 func (s *serializer) serializeJSON(flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
 	s.buf = append(s.buf, '{')
 	needsComma := false
@@ -177,7 +181,7 @@ func (s *serializer) serializeJSON(flags int64, timestamp time.Time, level int64
 	return s.buf
 }
 
-// serializeTxt formats log entries as plain txt (time, level, trace, fields).
+// serializeTxt formats log entries as plain txt (time, level, trace, fields)
 func (s *serializer) serializeTxt(flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
 	needsSpace := false
 
@@ -214,11 +218,14 @@ func (s *serializer) serializeTxt(flags int64, timestamp time.Time, level int64,
 	return s.buf
 }
 
-// writeTxtValue converts any value to its txt representation.
+// writeTxtValue converts any value to its txt representation
 func (s *serializer) writeTxtValue(v any) {
 	switch val := v.(type) {
 	case string:
-		s.buf = append(s.buf, val...)
+		s.appendSanitized(val) // prevent special character corruption
+	case rune:
+		// Single rune should be sanitized if non-printable
+		s.appendSanitizedRune(val)
 	case int:
 		s.buf = strconv.AppendInt(s.buf, int64(val), 10)
 	case int64:
@@ -253,21 +260,27 @@ func (s *serializer) writeTxtValue(v any) {
 			s.writeString(str)
 			s.buf = append(s.buf, '"')
 		} else {
-			s.buf = append(s.buf, str...)
+			s.appendSanitized(str)
 		}
+	case []byte:
+		s.appendSanitized(string(val)) // prevent special character corruption
 	default:
 		str := fmt.Sprintf("%+v", val)
 		if len(str) == 0 || strings.ContainsRune(str, ' ') {
 			s.buf = append(s.buf, '"')
-			s.writeString(str)
+			// Sanitize
+			for _, r := range str {
+				s.appendSanitizedRune(r)
+			}
 			s.buf = append(s.buf, '"')
 		} else {
-			s.buf = append(s.buf, str...)
+			// Sanitize non-quoted complex values
+			s.appendSanitized(str)
 		}
 	}
 }
 
-// writeJSONValue converts any value to its JSON representation.
+// writeJSONValue converts any value to its JSON representation
 func (s *serializer) writeJSONValue(v any) {
 	switch val := v.(type) {
 	case string:
@@ -388,7 +401,43 @@ func (s *serializer) serializeStructuredJSON(flags int64, timestamp time.Time, l
 	return s.buf
 }
 
-// Update the levelToString function to include the new heartbeat levels
+// appendSanitized sanitizes a string by replacing non-printable runes with their hex representation
+func (s *serializer) appendSanitized(data string) {
+	var builder strings.Builder
+	builder.Grow(len(data)) // Pre-allocate for efficiency
+
+	for _, r := range data {
+		// Use the standard library's definition of a printable character
+		// This correctly handles Unicode, including high-bit characters like '│' and '世界'
+		if strconv.IsPrint(r) {
+			builder.WriteRune(r)
+		} else {
+			// For non-printable runes, encode them safely in a <hex> format
+			// This handles multi-byte control characters correctly
+			var runeBytes [utf8.UTFMax]byte
+			n := utf8.EncodeRune(runeBytes[:], r)
+			builder.WriteString("<")
+			builder.WriteString(hex.EncodeToString(runeBytes[:n]))
+			builder.WriteString(">")
+		}
+	}
+	s.buf = append(s.buf, builder.String()...)
+}
+
+// appendSanitizedRune sanitizes a rune by replacing non-printable rune with its hex representation
+func (s *serializer) appendSanitizedRune(data rune) {
+	if strconv.IsPrint(data) {
+		s.buf = utf8.AppendRune(s.buf, data)
+	} else {
+		var runeBytes [utf8.UTFMax]byte
+		n := utf8.EncodeRune(runeBytes[:], data)
+		s.buf = append(s.buf, '<')
+		s.buf = append(s.buf, hex.EncodeToString(runeBytes[:n])...)
+		s.buf = append(s.buf, '>')
+	}
+}
+
+// levelToString converts integer level values to string
 func levelToString(level int64) string {
 	switch level {
 	case LevelDebug:
@@ -410,7 +459,7 @@ func levelToString(level int64) string {
 	}
 }
 
-// writeString appends a string to the buffer, escaping JSON special characters.
+// writeString appends a string to the buffer, escaping JSON special characters
 func (s *serializer) writeString(str string) {
 	lenStr := len(str)
 	for i := 0; i < lenStr; {
@@ -443,7 +492,7 @@ func (s *serializer) writeString(str string) {
 	}
 }
 
-// Update cached format
+// setTimestampFormat updates the cached timestamp format in the serializer
 func (s *serializer) setTimestampFormat(format string) {
 	if format == "" {
 		format = time.RFC3339Nano

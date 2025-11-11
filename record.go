@@ -11,6 +11,7 @@ import (
 // getCurrentLogChannel safely retrieves the current log channel
 func (l *Logger) getCurrentLogChannel() chan logRecord {
 	chVal := l.state.ActiveLogChannel.Load()
+	// No defensive nil check required in correct use of initialized logger
 	return chVal.(chan logRecord)
 }
 
@@ -31,8 +32,15 @@ func (l *Logger) getFlags() int64 {
 // sendLogRecord handles safe sending to the active channel
 func (l *Logger) sendLogRecord(record logRecord) {
 	defer func() {
-		if r := recover(); r != nil { // Catch panic on send to closed channel
-			l.handleFailedSend()
+		if r := recover(); r != nil {
+			// A panic is only expected when a race condition occurs during shutdown
+			if err, ok := r.(error); ok && err.Error() == "send on closed channel" {
+				// Expected race condition between logging and shutdown
+				l.handleFailedSend()
+			} else {
+				// Unexpected panic, re-throw to surface
+				panic(r)
+			}
 		}
 	}()
 
@@ -101,7 +109,7 @@ func (l *Logger) log(flags int64, level int64, depth int64, args ...any) {
 	l.sendLogRecord(record)
 }
 
-// internalLog handles writing internal logger diagnostics to stderr, if enabled.
+// internalLog handles writing internal logger diagnostics to stderr if enabled
 func (l *Logger) internalLog(format string, args ...any) {
 	// Check if internal error reporting is enabled
 	cfg := l.getConfig()

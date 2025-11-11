@@ -35,8 +35,8 @@ const (
 	adaptiveSpeedUpFactor  float64 = 0.8 // Speed up
 	// Minimum wait time used throughout the package
 	minWaitTime = 10 * time.Millisecond
+	// Size multiplier for KB, MB
+	sizeMultiplier = 1000
 )
 
 const hexChars = "0123456789abcdef"
-
-const sizeMultiplier = 1000

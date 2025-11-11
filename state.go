@@ -11,9 +11,9 @@ type State struct {
 	// General state
 	IsInitialized   atomic.Bool // Tracks successful initialization, not start of log processor
 	LoggerDisabled  atomic.Bool // Tracks logger stop due to issues (e.g. disk full)
-	ShutdownCalled  atomic.Bool
-	DiskFullLogged  atomic.Bool
-	DiskStatusOK    atomic.Bool
+	ShutdownCalled  atomic.Bool // Tracks if Shutdown() has been called, a terminal state
+	DiskFullLogged  atomic.Bool // Tracks if a disk full error has been logged to prevent log spam
+	DiskStatusOK    atomic.Bool // Tracks if disk space and size limits are currently met
 	Started         atomic.Bool // Tracks calls to Start() and Stop()
 	ProcessorExited atomic.Bool // Tracks if the processor goroutine is running or has exited
 

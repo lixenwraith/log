@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestLoggerShutdown verifies the logger's state and behavior after shutdown is called
 func TestLoggerShutdown(t *testing.T) {
 	t.Run("normal shutdown", func(t *testing.T) {
 		logger, _ := createTestLogger(t)
@@ -59,6 +60,7 @@ func TestLoggerShutdown(t *testing.T) {
 	})
 }
 
+// TestLoggerFlush tests the functionality and timeout behavior of the Flush method
 func TestLoggerFlush(t *testing.T) {
 	t.Run("successful flush", func(t *testing.T) {
 		logger, tmpDir := createTestLogger(t)

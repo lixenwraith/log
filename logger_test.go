@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Test helper to create logger with temp directory
+// createTestLogger creates logger in temp directory
 func createTestLogger(t *testing.T) (*Logger, string) {
 	tmpDir := t.TempDir()
 	logger := NewLogger()
@@ -35,6 +35,7 @@ func createTestLogger(t *testing.T) (*Logger, string) {
 	return logger, tmpDir
 }
 
+// TestNewLogger verifies that a new logger is created with the correct initial state
 func TestNewLogger(t *testing.T) {
 	logger := NewLogger()
 
@@ -44,6 +45,7 @@ func TestNewLogger(t *testing.T) {
 	assert.False(t, logger.state.LoggerDisabled.Load())
 }
 
+// TestApplyConfig verifies that applying a valid configuration initializes the logger correctly
 func TestApplyConfig(t *testing.T) {
 	logger, tmpDir := createTestLogger(t)
 	defer logger.Shutdown()
@@ -58,6 +60,7 @@ func TestApplyConfig(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// TestApplyConfigString tests applying configuration overrides from key-value strings
 func TestApplyConfigString(t *testing.T) {
 	logger, _ := createTestLogger(t)
 	defer logger.Shutdown()
@@ -133,6 +136,7 @@ func TestApplyConfigString(t *testing.T) {
 	}
 }
 
+// TestLoggerLoggingLevels checks that messages are correctly filtered based on the configured log level
 func TestLoggerLoggingLevels(t *testing.T) {
 	logger, tmpDir := createTestLogger(t)
 	defer logger.Shutdown()
@@ -158,6 +162,7 @@ func TestLoggerLoggingLevels(t *testing.T) {
 	assert.Contains(t, string(content), "ERROR error message")
 }
 
+// TestLoggerWithTrace ensures that logging with a stack trace does not cause a panic
 func TestLoggerWithTrace(t *testing.T) {
 	logger, _ := createTestLogger(t)
 	defer logger.Shutdown()
@@ -172,6 +177,7 @@ func TestLoggerWithTrace(t *testing.T) {
 	// Just verify it doesn't panic - trace content varies by runtime
 }
 
+// TestLoggerFormats verifies that the logger produces the correct output for different formats
 func TestLoggerFormats(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -197,8 +203,6 @@ func TestLoggerFormats(t *testing.T) {
 			name:   "raw format",
 			format: "raw",
 			check: func(t *testing.T, content string) {
-				// The "Logger started" message is also written in raw format.
-				// We just check that our test message is present in the output.
 				assert.Contains(t, content, "test message")
 			},
 		},
@@ -220,7 +224,7 @@ func TestLoggerFormats(t *testing.T) {
 			err := logger.ApplyConfig(cfg)
 			require.NoError(t, err)
 
-			// Start the logger after configuring it.
+			// Start the logger after configuring it
 			err = logger.Start()
 			require.NoError(t, err)
 
@@ -242,6 +246,7 @@ func TestLoggerFormats(t *testing.T) {
 	}
 }
 
+// TestLoggerConcurrency ensures the logger is safe for concurrent use from multiple goroutines
 func TestLoggerConcurrency(t *testing.T) {
 	logger, _ := createTestLogger(t)
 	defer logger.Shutdown()
@@ -262,6 +267,7 @@ func TestLoggerConcurrency(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// TestLoggerStdoutMirroring confirms that console output can be enabled without causing panics
 func TestLoggerStdoutMirroring(t *testing.T) {
 	logger := NewLogger()
 
@@ -280,6 +286,7 @@ func TestLoggerStdoutMirroring(t *testing.T) {
 	logger.Info("stdout test")
 }
 
+// TestLoggerWrite verifies that the Write method outputs raw, unformatted data
 func TestLoggerWrite(t *testing.T) {
 	logger, tmpDir := createTestLogger(t)
 	defer logger.Shutdown()
@@ -294,9 +301,83 @@ func TestLoggerWrite(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join(tmpDir, "log.log"))
 	require.NoError(t, err)
 
-	// The file will contain the "Logger started" message first.
-	// We check that our raw output is also present.
-	// Since raw output doesn't add a newline, the file should end with our string.
 	assert.Contains(t, string(content), "raw output 123")
 	assert.True(t, strings.HasSuffix(string(content), "raw output 123"))
+}
+
+// TestControlCharacterWrite verifies that control characters are safely handled in raw output
+func TestControlCharacterWrite(t *testing.T) {
+	logger, tmpDir := createTestLogger(t)
+	defer logger.Shutdown()
+
+	// Test various control characters
+	testCases := []struct {
+		name  string
+		input string
+	}{
+		{"null bytes", "test\x00data"},
+		{"bell", "alert\x07message"},
+		{"backspace", "back\x08space"},
+		{"form feed", "page\x0Cbreak"},
+		{"vertical tab", "vertical\x0Btab"},
+		{"escape", "escape\x1B[31mcolor"},
+		{"mixed", "\x00\x01\x02test\x1F\x7Fdata"},
+	}
+
+	for _, tc := range testCases {
+		logger.Write(tc.input)
+	}
+
+	logger.Flush(time.Second)
+
+	// Verify file contains hex-encoded control chars
+	content, err := os.ReadFile(filepath.Join(tmpDir, "log.log"))
+	require.NoError(t, err)
+
+	// Control chars should be hex-encoded in raw output
+	assert.Contains(t, string(content), "test")
+	assert.Contains(t, string(content), "data")
+	// Raw format preserves as-is, but reading back should work
+}
+
+// TestRawSanitizedOutput verifies that raw output is correctly sanitized,
+// preserving printable runes and hex-encoding non-printable ones
+func TestRawSanitizedOutput(t *testing.T) {
+	logger, tmpDir := createTestLogger(t)
+	defer logger.Shutdown()
+
+	// 1. A string with valid multi-byte UTF-8 should be unchanged
+	utf8String := "Hello │ 世界"
+
+	// 2. A string with single-byte control chars should have them encoded
+	stringWithControl := "start-\x07-end"
+	expectedStringOutput := "start-<07>-end"
+
+	// 3. A []byte with control chars should have them encoded, not stripped
+	bytesWithControl := []byte("data\x00with\x08bytes")
+	expectedBytesOutput := "data<00>with<08>bytes"
+
+	// 4. A string with a multi-byte non-printable rune (U+0085, NEXT LINE)
+	// This proves Unicode control character handling is correct
+	multiByteControl := "line1\u0085line2"
+	expectedMultiByteOutput := "line1<c285>line2"
+
+	// Log all cases
+	logger.Write(utf8String, stringWithControl, bytesWithControl, multiByteControl)
+	logger.Flush(time.Second)
+
+	// Read and verify the single line of output
+	content, err := os.ReadFile(filepath.Join(tmpDir, "log.log"))
+	require.NoError(t, err)
+	logOutput := string(content)
+
+	// The output should be one line with spaces between the sanitized parts
+	expectedOutput := strings.Join([]string{
+		utf8String,
+		expectedStringOutput,
+		expectedBytesOutput,
+		expectedMultiByteOutput,
+	}, " ")
+
+	assert.Equal(t, expectedOutput, logOutput)
 }

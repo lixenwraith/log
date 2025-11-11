@@ -10,13 +10,13 @@ Log files are automatically rotated when they reach the configured size limit:
 
 ```go
 logger.ApplyConfigString(
-    "max_size_mb=100",  // Rotate at 100MB
+    "max_size_kb=100",  // Rotate at 100MB
 )
 ```
 
 ### Rotation Behavior
 
-1. **Size Check**: Before each write, the logger checks if the file would exceed `max_size_mb`
+1. **Size Check**: Before each write, the logger checks if the file would exceed `max_size_kb`
 2. **New File Creation**: Creates a new file with timestamp: `appname_240115_103045_123456789.log`
 3. **Seamless Transition**: No logs are lost during rotation
 4. **Old File Closure**: Previous file is properly closed and synced
@@ -44,8 +44,8 @@ The logger enforces two types of space limits:
 
 ```go
 logger.ApplyConfigString(
-    "max_total_size_mb=1000",   // Total log directory size
-    "min_disk_free_mb=5000",    // Minimum free disk space
+    "max_total_size_kb=1000",   // Total log directory size
+    "min_disk_free_kb=5000",    // Minimum free disk space
 )
 ```
 
@@ -62,23 +62,23 @@ When limits are exceeded, the logger:
 ```go
 // Conservative: Strict limits
 logger.ApplyConfigString(
-    "max_size_mb=50",          // 50MB files
-    "max_total_size_mb=500",   // 500MB total
-    "min_disk_free_mb=1000",   // 1GB free required
+    "max_size_kb=500",          // 500KB files
+    "max_total_size_kb=5000",   // 5MB total
+    "min_disk_free_kb=1000000",   // 1GB free required
 )
 
 // Generous: Large files, external archival
 logger.ApplyConfigString(
-    "max_size_mb=1000",        // 1GB files
-    "max_total_size_mb=0",     // No total limit
-    "min_disk_free_mb=100",    // 100MB free required
+    "max_size_kb=100000",        // 100MB files
+    "max_total_size_kb=0",     // No total limit
+    "min_disk_free_kb=10000",    // 10MB free required
 )
 
 // Balanced: Production defaults
 logger.ApplyConfigString(
-    "max_size_mb=100",         // 100MB files
-    "max_total_size_mb=5000",  // 5GB total
-    "min_disk_free_mb=500",    // 500MB free required
+    "max_size_kb=100000",         // 100MB files
+    "max_total_size_kb=5000000",  // 5GB total
+    "min_disk_free_kb=500000",    // 500MB free required
 )
 ```
 
@@ -102,21 +102,21 @@ logger.ApplyConfigString(
 logger.ApplyConfigString(
     "retention_period_hrs=720",    // 30 days
     "retention_check_mins=60",     // Check hourly
-    "max_size_mb=1000",           // 1GB daily files
+    "max_size_kb=1000000",           // 1GB daily files
 )
 
 // High-frequency logs, keep 24 hours
 logger.ApplyConfigString(
     "retention_period_hrs=24",     // 1 day
     "retention_check_mins=15",     // Check every 15 min
-    "max_size_mb=100",            // 100MB files
+    "max_size_kb=100000",            // 100MB files
 )
 
 // Compliance: Keep 90 days
 logger.ApplyConfigString(
     "retention_period_hrs=2160",   // 90 days
     "retention_check_mins=360",    // Check every 6 hours
-    "max_total_size_mb=100000",   // 100GB total
+    "max_total_size_kb=100000000",   // 100GB total
 )
 ```
 
@@ -161,7 +161,7 @@ logger.ApplyConfigString(
 
 Output:
 ```
-2024-01-15T10:30:00Z DISK type="disk" sequence=1 rotated_files=5 deleted_files=2 total_log_size_mb="487.32" log_file_count=8 current_file_size_mb="23.45" disk_status_ok=true disk_free_mb="5234.67"
+2024-01-15T10:30:00Z DISK type="disk" sequence=1 rotated_files=5 deleted_files=2 total_log_size_kb="487.32" log_file_count=8 current_file_size_kb="23.45" disk_status_ok=true disk_free_kb="5234.67"
 ```
 
 ## Manual Recovery
@@ -183,5 +183,4 @@ df -h /var/log
 ```
 
 ---
-
 [← Logging Guide](logging-guide.md) | [← Back to README](../README.md) | [Heartbeat Monitoring →](heartbeat-monitoring.md)

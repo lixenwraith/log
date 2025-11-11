@@ -131,11 +131,11 @@ func logWithContext(ctx context.Context, logger *log.Logger, level string, msg s
 Default format for development and debugging:
 
 ```
-2024-01-15T10:30:45.123456789Z INFO User login user_id=42 email="user@example.com" ip="192.168.1.100"
+2024-01-15T10:30:45.123456789Z INFO User login user_id=42 email=user@example.com ip=192.168.1.100
 2024-01-15T10:30:45.234567890Z WARN Rate limit approaching user_id=42 requests=95 limit=100
 ```
 
-Note: The txt format does not add quotes around string values containing spaces. This ensures predictability for simple, space-delimited parsing tools. For logs where maintaining the integrity of such values is critical, `json` format is recommended.
+Note: The txt format adds quotes around non-string values (errors, stringers, complex types) when they contain spaces. Plain string arguments are not quoted. Control characters in strings are sanitized to hex representation. For logs requiring exact preservation of all values, `json` format is recommended.
 
 Configuration:
 ```go
@@ -336,5 +336,4 @@ func (m *MetricsCollector) logMetrics() {
 ```
 
 ---
-
 [← API Reference](api-reference.md) | [← Back to README](../README.md) | [Disk Management →](disk-management.md)

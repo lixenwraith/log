@@ -5,6 +5,7 @@ import (
 	"testing"
 )
 
+// BenchmarkLoggerInfo benchmarks the performance of standard Info logging
 func BenchmarkLoggerInfo(b *testing.B) {
 	logger, _ := createTestLogger(&testing.T{})
 	defer logger.Shutdown()
@@ -15,6 +16,7 @@ func BenchmarkLoggerInfo(b *testing.B) {
 	}
 }
 
+// BenchmarkLoggerJSON benchmarks the performance of JSON formatted logging
 func BenchmarkLoggerJSON(b *testing.B) {
 	logger, _ := createTestLogger(&testing.T{})
 	defer logger.Shutdown()
@@ -29,6 +31,7 @@ func BenchmarkLoggerJSON(b *testing.B) {
 	}
 }
 
+// BenchmarkLoggerStructured benchmarks the performance of structured JSON logging
 func BenchmarkLoggerStructured(b *testing.B) {
 	logger, _ := createTestLogger(&testing.T{})
 	defer logger.Shutdown()
@@ -49,6 +52,7 @@ func BenchmarkLoggerStructured(b *testing.B) {
 	}
 }
 
+// BenchmarkConcurrentLogging benchmarks the logger's performance under concurrent load
 func BenchmarkConcurrentLogging(b *testing.B) {
 	logger, _ := createTestLogger(&testing.T{})
 	defer logger.Shutdown()

@@ -2,12 +2,16 @@
 package log
 
 import (
+	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
+// TestDefaultConfig verifies that the default configuration is created with expected values
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
@@ -23,6 +27,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, int64(1024), cfg.BufferSize)
 }
 
+// TestConfigClone verifies that cloning a config creates a deep copy
 func TestConfigClone(t *testing.T) {
 	cfg1 := DefaultConfig()
 	cfg1.Level = LevelDebug
@@ -41,6 +46,7 @@ func TestConfigClone(t *testing.T) {
 	assert.Equal(t, LevelDebug, cfg2.Level)
 }
 
+// TestConfigValidate checks various invalid configuration scenarios to ensure they produce errors
 func TestConfigValidate(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -111,4 +117,49 @@ func TestConfigValidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConcurrentApplyConfig verifies that applying configurations concurrently does not cause race conditions or panics
+func TestConcurrentApplyConfig(t *testing.T) {
+	logger, tmpDir := createTestLogger(t)
+	defer logger.Shutdown()
+
+	var wg sync.WaitGroup
+
+	// Concurrent config applications
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			cfg := logger.GetConfig()
+			// Vary settings
+			if id%2 == 0 {
+				cfg.Level = LevelDebug
+				cfg.Format = "json"
+			} else {
+				cfg.Level = LevelInfo
+				cfg.Format = "txt"
+			}
+			cfg.TraceDepth = int64(id % 5)
+
+			err := logger.ApplyConfig(cfg)
+			assert.NoError(t, err)
+
+			// Log with new config
+			logger.Info("config test", id)
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify logger still functional
+	logger.Info("after concurrent config")
+	err := logger.Flush(time.Second)
+	assert.NoError(t, err)
+
+	// Check log file exists and has content
+	files, err := os.ReadDir(tmpDir)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(files), 1)
 }

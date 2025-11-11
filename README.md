@@ -6,21 +6,23 @@
 
 A high-performance, buffered, rotating file logger for Go applications with built-in disk management, operational monitoring, and framework compatibility adapters.
 
-## ✨ Key Features
+## Key Features
 
-- 🚀 **Lock-free async logging** with minimal application impact
-- 📁 **Automatic file rotation** and disk space management
-- 📊 **Operational heartbeats** for production monitoring
-- 🔄 **Hot reconfiguration** without data loss
-- 🎯 **Framework adapters** for gnet v2 and fasthttp
-- 🛡️ **Production-grade reliability** with graceful shutdown
+- **Lock-free async logging** with minimal application impact
+- **Automatic file rotation** and disk space management
+- **Operational heartbeats** for production monitoring
+- **Hot reconfiguration** without data loss
+- **Framework adapters** for gnet v2 and fasthttp
+- **Production-grade reliability** with graceful shutdown
 
-## 🚀 Quick Start
+## Quick Start
 
 ```go
 package main
 
 import (
+	"fmt"
+	
     "github.com/lixenwraith/log"
 )
 
@@ -29,11 +31,14 @@ func main() {
     logger := log.NewLogger()
     err := logger.ApplyConfigString("directory=/var/log/myapp")
     if err != nil {
-        panic(err)
+        panic(fmt.Errorf("failed to apply logger config: %w", err))
     }
     defer logger.Shutdown()
 
     // Start logging
+	if err = logger.Start(); err != nil {
+        panic(fmt.Errorf("failed to start logger: %w", err))
+    }
     logger.Info("Application started", "version", "1.0.0")
     logger.Debug("Debug information", "user_id", 12345)
     logger.Warn("Warning message", "threshold", 0.95)
@@ -41,7 +46,7 @@ func main() {
 }
 ```
 
-## 📦 Installation
+## Installation
 
 ```bash
 go get github.com/lixenwraith/log
@@ -52,34 +57,19 @@ For configuration management support:
 go get github.com/lixenwraith/config
 ```
 
-## 📚 Documentation
+## Documentation
 
 - **[Getting Started](doc/getting-started.md)** - Installation and basic usage
-- **[Configuration Guide](doc/configuration.md)** - All configuration options
-- **[Configuration Builder](doc/config-builder.md)** - Builder pattern guide
-- **[API Reference](doc/api-reference.md)** - Complete API documentation
-- **[Logging Guide](doc/logging-guide.md)** - Logging methods and best practices
-- **[Disk Management](doc/disk-management.md)** - File rotation and cleanup
-- **[Heartbeat Monitoring](doc/heartbeat-monitoring.md)** - Operational statistics
-- **[Compatibility Adapters](doc/compatibility-adapters.md)** - Framework integrations
+- **[Configuration Guide](doc/configuration.md)** - Configuration options
+- **[Configuration Builder](doc/builder.md)** - Builder pattern guide
+- **[API Reference](doc/api.md)** - Complete API documentation
+- **[Logging Guide](doc/logging.md)** - Logging methods and best practices
+- **[Disk Management](doc/storage.md)** - File rotation and cleanup
+- **[Heartbeat Monitoring](doc/heartbeat.md)** - Operational statistics
+- **[Compatibility Adapters](doc/adapters.md)** - Framework integrations
+- **[LLM Guide](doc/llm-guide_lixenwraith_log.md)** - Guide for LLM usage without full codebase
 
-## 🎯 Framework Integration
-
-The package includes adapters for some popular Go frameworks:
-
-```go
-// gnet v2 integration
-adapter := compat.NewGnetAdapter(logger)
-gnet.Run(handler, "tcp://127.0.0.1:9000", gnet.WithLogger(adapter))
-
-// fasthttp integration
-adapter := compat.NewFastHTTPAdapter(logger)
-server := &fasthttp.Server{Logger: adapter}
-```
-
-See [Compatibility Adapters](doc/compatibility-adapters.md) for detailed integration guides.
-
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 The logger uses a lock-free, channel-based architecture for high performance:
 
@@ -89,12 +79,12 @@ Application → Log Methods → Buffered Channel → Background Processor → Fi
             (non-blocking)                    (rotation, cleanup, monitoring)
 ```
 
-## 🤝 Contributing
+## Contributing
 
 Contributions and suggestions are welcome!
 There is no contribution policy, but if interested, please submit pull requests to the repository.
 Submit suggestions or issues at [issue tracker](https://github.com/lixenwraith/log/issues).
 
-## 📄 License
+## License
 
 BSD-3-Clause

@@ -388,5 +388,4 @@ func (s *Service) Shutdown() error {
 ```
 
 ---
-
 [← Configuration Builder](config-builder.md) | [← Back to README](../README.md) | [Logging Guide →](logging-guide.md)

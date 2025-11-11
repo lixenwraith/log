@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestLogRotation verifies that log files are correctly rotated when they exceed MaxSizeKB
 func TestLogRotation(t *testing.T) {
 	logger, tmpDir := createTestLogger(t)
 	defer logger.Shutdown()
@@ -66,6 +67,7 @@ func TestLogRotation(t *testing.T) {
 	assert.True(t, hasRotated, "Expected to find rotated log files with timestamp pattern")
 }
 
+// TestDiskSpaceManagement ensures that old log files are cleaned up to stay within MaxTotalSizeKB
 func TestDiskSpaceManagement(t *testing.T) {
 	logger, tmpDir := createTestLogger(t)
 	defer logger.Shutdown()
@@ -84,7 +86,7 @@ func TestDiskSpaceManagement(t *testing.T) {
 	}
 
 	cfg := logger.GetConfig()
-	// Set a small limit to trigger cleanup. 0 disables the check.
+	// Set a small limit to trigger cleanup - 0 disables the check
 	cfg.MaxTotalSizeKB = 1
 	// Disable free disk space check to isolate the total size check
 	cfg.MinDiskFreeKB = 0
@@ -97,7 +99,7 @@ func TestDiskSpaceManagement(t *testing.T) {
 	// Small delay to let the check complete
 	time.Sleep(100 * time.Millisecond)
 
-	// Verify cleanup occurred. All old logs should be deleted.
+	// Verify cleanup occurred. All old logs should be deleted
 	files, err := os.ReadDir(tmpDir)
 	require.NoError(t, err)
 
@@ -106,6 +108,7 @@ func TestDiskSpaceManagement(t *testing.T) {
 	assert.Equal(t, "log.log", files[0].Name())
 }
 
+// TestRetentionPolicy checks if log files older than RetentionPeriodHrs are deleted
 func TestRetentionPolicy(t *testing.T) {
 	logger, tmpDir := createTestLogger(t)
 	defer logger.Shutdown()

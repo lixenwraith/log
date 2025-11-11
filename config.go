@@ -16,15 +16,15 @@ type Config struct {
 	EnableFile    bool   `toml:"enable_file"`    // Enable file output
 
 	// Basic settings
-	Level     int64  `toml:"level"`
-	Name      string `toml:"name"` // Base name for log files
-	Directory string `toml:"directory"`
-	Format    string `toml:"format"` // "txt", "raw", or "json"
-	Extension string `toml:"extension"`
+	Level     int64  `toml:"level"`     // Log records at or above this Level will be logged
+	Name      string `toml:"name"`      // Base name for log files
+	Directory string `toml:"directory"` // Directory for log files
+	Format    string `toml:"format"`    // "txt", "raw", or "json"
+	Extension string `toml:"extension"` // Log file extension
 
 	// Formatting
-	ShowTimestamp   bool   `toml:"show_timestamp"`
-	ShowLevel       bool   `toml:"show_level"`
+	ShowTimestamp   bool   `toml:"show_timestamp"`   // Add timestamp to log records
+	ShowLevel       bool   `toml:"show_level"`       // Add level to log record
 	TimestampFormat string `toml:"timestamp_format"` // Time format for log timestamps
 
 	// Buffer and size limits
@@ -224,22 +224,22 @@ func applyConfigField(cfg *Config, key, value string) error {
 			return fmtErrorf("invalid integer value for buffer_size '%s': %w", value, err)
 		}
 		cfg.BufferSize = intVal
-	case "max_size_mb":
+	case "max_size_kb":
 		intVal, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return fmtErrorf("invalid integer value for max_size_mb '%s': %w", value, err)
+			return fmtErrorf("invalid integer value for max_size_kb '%s': %w", value, err)
 		}
 		cfg.MaxSizeKB = intVal
-	case "max_total_size_mb":
+	case "max_total_size_kb":
 		intVal, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return fmtErrorf("invalid integer value for max_total_size_mb '%s': %w", value, err)
+			return fmtErrorf("invalid integer value for max_total_size_kb '%s': %w", value, err)
 		}
 		cfg.MaxTotalSizeKB = intVal
-	case "min_disk_free_mb":
+	case "min_disk_free_kb":
 		intVal, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return fmtErrorf("invalid integer value for min_disk_free_mb '%s': %w", value, err)
+			return fmtErrorf("invalid integer value for min_disk_free_kb '%s': %w", value, err)
 		}
 		cfg.MinDiskFreeKB = intVal
 

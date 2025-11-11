@@ -9,7 +9,7 @@ import (
 	"unicode"
 )
 
-// getTrace returns a function call trace string.
+// getTrace returns a function call trace string
 func getTrace(depth int64, skip int) string {
 	if depth <= 0 || depth > 10 {
 		return ""
@@ -78,7 +78,7 @@ func combineErrors(err1, err2 error) error {
 	return fmt.Errorf("%v; %w", err1, err2)
 }
 
-// parseKeyValue splits a "key=value" string.
+// parseKeyValue splits a "key=value" string
 func parseKeyValue(arg string) (string, string, error) {
 	parts := strings.SplitN(strings.TrimSpace(arg), "=", 2)
 	if len(parts) != 2 {
@@ -92,7 +92,7 @@ func parseKeyValue(arg string) (string, string, error) {
 	return key, value, nil
 }
 
-// Level converts level string to numeric constant.
+// Level converts level string to numeric constant
 func Level(levelStr string) (int64, error) {
 	switch strings.ToLower(strings.TrimSpace(levelStr)) {
 	case "debug":

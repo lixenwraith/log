@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createTestCompatBuilder creates a standard setup for compatibility adapter tests.
+// createTestCompatBuilder creates a standard setup for compatibility adapter tests
 func createTestCompatBuilder(t *testing.T) (*Builder, *log.Logger, string) {
 	t.Helper()
 	tmpDir := t.TempDir()
@@ -26,7 +25,7 @@ func createTestCompatBuilder(t *testing.T) (*Builder, *log.Logger, string) {
 		Build()
 	require.NoError(t, err)
 
-	// Start the logger before using it.
+	// Start the logger before using it
 	err = appLogger.Start()
 	require.NoError(t, err)
 
@@ -34,12 +33,12 @@ func createTestCompatBuilder(t *testing.T) (*Builder, *log.Logger, string) {
 	return builder, appLogger, tmpDir
 }
 
-// readLogFile reads a log file, retrying briefly to await async writes.
+// readLogFile reads a log file, retrying briefly to await async writes
 func readLogFile(t *testing.T, dir string, expectedLines int) []string {
 	t.Helper()
 	var err error
 
-	// Retry for a short period to handle logging delays.
+	// Retry for a short period to handle logging delays
 	for i := 0; i < 20; i++ {
 		var files []os.DirEntry
 		files, err = os.ReadDir(dir)
@@ -65,6 +64,7 @@ func readLogFile(t *testing.T, dir string, expectedLines int) []string {
 	return nil
 }
 
+// TestCompatBuilder verifies the compatibility builder can be initialized correctly
 func TestCompatBuilder(t *testing.T) {
 	t.Run("with existing logger", func(t *testing.T) {
 		builder, logger, _ := createTestCompatBuilder(t)
@@ -86,12 +86,13 @@ func TestCompatBuilder(t *testing.T) {
 		assert.NotNil(t, fasthttpAdapter)
 
 		logger1, _ := builder.GetLogger()
-		// The builder now creates AND starts the logger internally if needed.
-		// We need to defer shutdown to clean up resources.
+		// The builder now creates AND starts the logger internally if needed
+		// We need to defer shutdown to clean up resources
 		defer logger1.Shutdown()
 	})
 }
 
+// TestGnetAdapter tests the gnet adapter's logging output and format
 func TestGnetAdapter(t *testing.T) {
 	builder, logger, tmpDir := createTestCompatBuilder(t)
 	defer logger.Shutdown()
@@ -111,10 +112,9 @@ func TestGnetAdapter(t *testing.T) {
 	err = logger.Flush(time.Second)
 	require.NoError(t, err)
 
-	// The "Logger started" message is also logged, so we expect 6 lines.
-	lines := readLogFile(t, tmpDir, 6)
+	lines := readLogFile(t, tmpDir, 5)
 
-	// Define expected log data. The order in the "fields" array is fixed by the adapter call.
+	// Define expected log data. The order in the "fields" array is fixed by the adapter call
 	expected := []struct{ level, msg string }{
 		{"DEBUG", "gnet debug id=1"},
 		{"INFO", "gnet info id=2"},
@@ -126,22 +126,20 @@ func TestGnetAdapter(t *testing.T) {
 	// Filter out the "Logger started" line
 	var logLines []string
 	for _, line := range lines {
-		if !strings.Contains(line, "Logger started") {
-			logLines = append(logLines, line)
-		}
+		logLines = append(logLines, line)
 	}
 	require.Len(t, logLines, 5, "Should have 5 gnet log lines after filtering")
 
 	for i, line := range logLines {
-		var entry map[string]interface{}
+		var entry map[string]any
 		err := json.Unmarshal([]byte(line), &entry)
 		require.NoError(t, err, "Failed to parse log line: %s", line)
 
 		assert.Equal(t, expected[i].level, entry["level"])
 
-		// The logger puts all arguments into a "fields" array.
+		// The logger puts all arguments into a "fields" array
 		// The adapter's calls look like: logger.Info("msg", msg, "source", "gnet")
-		fields := entry["fields"].([]interface{})
+		fields := entry["fields"].([]any)
 		assert.Equal(t, "msg", fields[0])
 		assert.Equal(t, expected[i].msg, fields[1])
 		assert.Equal(t, "source", fields[2])
@@ -150,6 +148,7 @@ func TestGnetAdapter(t *testing.T) {
 	assert.True(t, fatalCalled, "Custom fatal handler should have been called")
 }
 
+// TestStructuredGnetAdapter tests the gnet adapter with structured field extraction
 func TestStructuredGnetAdapter(t *testing.T) {
 	builder, logger, tmpDir := createTestCompatBuilder(t)
 	defer logger.Shutdown()
@@ -162,25 +161,19 @@ func TestStructuredGnetAdapter(t *testing.T) {
 	err = logger.Flush(time.Second)
 	require.NoError(t, err)
 
-	// The "Logger started" message is also logged, so we expect 2 lines.
-	lines := readLogFile(t, tmpDir, 2)
+	lines := readLogFile(t, tmpDir, 1)
 
 	// Find our specific log line
-	var logLine string
-	for _, line := range lines {
-		if strings.Contains(line, "request served") {
-			logLine = line
-			break
-		}
-	}
+	require.Len(t, lines, 1, "Should be exactly one log line")
+	logLine := lines[0]
 	require.NotEmpty(t, logLine, "Did not find the structured gnet log line")
 
-	var entry map[string]interface{}
+	var entry map[string]any
 	err = json.Unmarshal([]byte(logLine), &entry)
 	require.NoError(t, err)
 
-	// The structured adapter parses keys and values, so we check them directly.
-	fields := entry["fields"].([]interface{})
+	// The structured adapter parses keys and values, so we check them directly
+	fields := entry["fields"].([]any)
 	assert.Equal(t, "INFO", entry["level"])
 	assert.Equal(t, "msg", fields[0])
 	assert.Equal(t, "request served", fields[1])
@@ -192,6 +185,7 @@ func TestStructuredGnetAdapter(t *testing.T) {
 	assert.Equal(t, "gnet", fields[7])
 }
 
+// TestFastHTTPAdapter tests the fasthttp adapter's logging output and level detection
 func TestFastHTTPAdapter(t *testing.T) {
 	builder, logger, tmpDir := createTestCompatBuilder(t)
 	defer logger.Shutdown()
@@ -212,26 +206,19 @@ func TestFastHTTPAdapter(t *testing.T) {
 	err = logger.Flush(time.Second)
 	require.NoError(t, err)
 
-	// Expect 4 test messages + 1 "Logger started" message
-	lines := readLogFile(t, tmpDir, 5)
+	// Expect 4 test messages
+	lines := readLogFile(t, tmpDir, 4)
 	expectedLevels := []string{"INFO", "DEBUG", "WARN", "ERROR"}
 
-	// Filter out the "Logger started" line
-	var logLines []string
-	for _, line := range lines {
-		if !strings.Contains(line, "Logger started") {
-			logLines = append(logLines, line)
-		}
-	}
-	require.Len(t, logLines, 4, "Should have 4 fasthttp log lines after filtering")
+	require.Len(t, lines, 4, "Should have 4 fasthttp log lines")
 
-	for i, line := range logLines {
-		var entry map[string]interface{}
+	for i, line := range lines {
+		var entry map[string]any
 		err := json.Unmarshal([]byte(line), &entry)
 		require.NoError(t, err, "Failed to parse log line: %s", line)
 
 		assert.Equal(t, expectedLevels[i], entry["level"])
-		fields := entry["fields"].([]interface{})
+		fields := entry["fields"].([]any)
 		assert.Equal(t, "msg", fields[0])
 		assert.Equal(t, testMessages[i], fields[1])
 		assert.Equal(t, "source", fields[2])

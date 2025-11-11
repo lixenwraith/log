@@ -165,5 +165,4 @@ With `format=txt`, heartbeats are human-readable:
 ```
 
 ---
-
 [← Disk Management](disk-management.md) | [← Back to README](../README.md) | [Compatibility Adapters →](compatibility-adapters.md)

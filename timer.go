@@ -83,7 +83,7 @@ func (l *Logger) setupDiskCheckTimer() *time.Ticker {
 	return time.NewTicker(currentDiskCheckInterval)
 }
 
-// setupHeartbeatTimer configures the heartbeat timer if heartbeats are enabled
+// setupHeartbeatTimer configures the heartbeat timer if enabled
 func (l *Logger) setupHeartbeatTimer(timers *TimerSet) <-chan time.Time {
 	c := l.getConfig()
 	heartbeatLevel := c.HeartbeatLevel

@@ -6,3 +6,4 @@ log
 logs
 *.log
 *.toml
+build.sh

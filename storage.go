@@ -59,6 +59,7 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 	maxTotal := maxTotalKB * sizeMultiplier
 	minFreeRequired := minDiskFreeKB * sizeMultiplier
 
+	// If no limits are set, the disk is considered OK
 	if maxTotal <= 0 && minFreeRequired <= 0 {
 		if !l.state.DiskStatusOK.Load() {
 			l.state.DiskStatusOK.Store(true)
@@ -67,6 +68,7 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 		return true
 	}
 
+	// Check available disk space
 	freeSpace, err := l.getDiskFreeSpace(dir)
 	if err != nil {
 		l.internalLog("warning - failed to check free disk space for '%s': %v\n", dir, err)
@@ -74,6 +76,7 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 		return false
 	}
 
+	// Determine if cleanup is needed based on disk space and total log size
 	needsCleanupCheck := false
 	spaceToFree := int64(0)
 	if minFreeRequired > 0 && freeSpace < minFreeRequired {
@@ -99,6 +102,7 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 		}
 	}
 
+	// Trigger cleanup if needed and allowed by the 'forceCleanup' flag
 	if needsCleanupCheck && forceCleanup {
 		if err := l.cleanOldLogs(spaceToFree); err != nil {
 			if !l.state.DiskFullLogged.Swap(true) {
@@ -111,7 +115,7 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 			l.state.DiskStatusOK.Store(false)
 			return false
 		}
-		// Cleanup succeeded
+		// Cleanup succeeded, reset flags
 		l.state.DiskFullLogged.Store(false)
 		l.state.DiskStatusOK.Store(true)
 		l.updateEarliestFileTime()
@@ -123,7 +127,7 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 		}
 		return false
 	} else {
-		// Limits OK
+		// Limits OK, reset flags
 		if !l.state.DiskStatusOK.Load() {
 			l.state.DiskStatusOK.Store(true)
 			l.state.DiskFullLogged.Store(false)
@@ -192,7 +196,7 @@ func (l *Logger) cleanOldLogs(required int64) error {
 		return fmtErrorf("failed to read log directory '%s' for cleanup: %w", dir, err)
 	}
 
-	// Get the static log filename to exclude from deletion
+	// Build a list of log files eligible for deletion, excluding the active log file
 	staticLogName := name
 	if ext != "" {
 		staticLogName = name + "." + ext
@@ -226,8 +230,10 @@ func (l *Logger) cleanOldLogs(required int64) error {
 		return nil
 	}
 
+	// Sort logs by modification time to delete the oldest ones first
 	sort.Slice(logs, func(i, j int) bool { return logs[i].modTime.Before(logs[j].modTime) })
 
+	// Iterate and remove files until enough space has been freed
 	var freedSpace int64
 	for _, log := range logs {
 		if required > 0 && freedSpace >= required {
@@ -399,6 +405,7 @@ func (l *Logger) rotateLogFile() error {
 	// Get current file handle
 	cfPtr := l.state.CurrentFile.Load()
 	if cfPtr == nil {
+		// This can happen if file logging was disabled and re-enabled
 		// No current file, just create a new one
 		newFile, err := l.createNewLogFile()
 		if err != nil {
@@ -412,7 +419,7 @@ func (l *Logger) rotateLogFile() error {
 
 	currentFile, ok := cfPtr.(*os.File)
 	if !ok || currentFile == nil {
-		// Invalid file handle, create new one
+		// Invalid file handle in state, treat as if there's no file
 		newFile, err := l.createNewLogFile()
 		if err != nil {
 			return fmtErrorf("failed to create log file during rotation: %w", err)
@@ -429,7 +436,7 @@ func (l *Logger) rotateLogFile() error {
 		// Continue with rotation anyway
 	}
 
-	// Generate archive filename with current timestamp
+	// Generate a new unique name with current timestamp for the old log file
 	dir := c.Directory
 	archiveName := l.generateArchiveLogFileName(time.Now())
 	archivePath := filepath.Join(dir, archiveName)
@@ -437,7 +444,8 @@ func (l *Logger) rotateLogFile() error {
 	// Rename current file to archive name
 	currentPath := l.getStaticLogFilePath()
 	if err := os.Rename(currentPath, archivePath); err != nil {
-		// The original file is closed and couldn't be renamed. This is a terminal state for file logging.
+		// Critical failure: the original file is closed and couldn't be renamed
+		// This is a terminal state for file logging
 		l.internalLog("failed to rename log file from '%s' to '%s': %v. file logging disabled.",
 			currentPath, archivePath, err)
 		l.state.LoggerDisabled.Store(true)

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestBuilder_Build tests the full lifecycle of creating a logger using the Builder
 func TestBuilder_Build(t *testing.T) {
 	t.Run("successful build returns configured logger", func(t *testing.T) {
 		// Create a temporary directory for the test
