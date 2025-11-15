@@ -1,6 +1,6 @@
 # Log
 
-[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://golang.org)
+[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 [![Documentation](https://img.shields.io/badge/Docs-Available-green.svg)](doc/)
 
@@ -59,6 +59,7 @@ go get github.com/lixenwraith/log
 - **[Configuration Builder](doc/builder.md)** - Builder pattern guide
 - **[API Reference](doc/api.md)** - Complete API documentation
 - **[Logging Guide](doc/logging.md)** - Logging methods and best practices
++ **[Formatting & Sanitization](doc/formatting.md)** - Standalone formatter and sanitizer packages
 - **[Disk Management](doc/storage.md)** - File rotation and cleanup
 - **[Heartbeat Monitoring](doc/heartbeat.md)** - Operational statistics
 - **[Compatibility Adapters](doc/adapters.md)** - Framework integrations

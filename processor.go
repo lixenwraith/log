@@ -13,7 +13,7 @@ func (l *Logger) processLogs(ch <-chan logRecord) {
 
 	// Set up timers and state variables
 	timers := l.setupProcessingTimers()
-	defer l.closeProcessingTimers(timers)
+	defer l.stopProcessingTimers(timers)
 
 	c := l.getConfig()
 
@@ -103,9 +103,7 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 	}
 
 	// Format and serialize the log entry once
-	format := c.Format
 	data := l.formatter.Format(
-		format,
 		record.Flags,
 		record.TimeStamp,
 		record.Level,

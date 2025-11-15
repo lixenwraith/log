@@ -49,9 +49,11 @@ logger.Info("info txt log record written to /var/log/myapp.txt")
 |-----------|------|-------------|------------|
 | `level` | `int64` | Minimum log level (-4=Debug, 0=Info, 4=Warn, 8=Error) | `0` |
 | `name` | `string` | Base name for log files | `"log"`    |
-| `directory` | `string` | Directory to store log files | `"./log"` |
-| `format` | `string` | Output format: `"txt"` or `"json"` | `"txt"` |
 | `extension` | `string` | Log file extension (without dot) | `"log"` |
+| `directory` | `string` | Directory to store log files | `"./log"` |
+| `format` | `string` | Output format: `"txt"`, `"json"`, or `"raw"` | `"txt"` |
+| `sanitization` | `string` | Sanitization policy: `"raw"`, `"txt"`, `"json"`, or `"shell"` | `"raw"` |
+| `timestamp_format` | `string` | Custom timestamp format (Go time format) | `time.RFC3339Nano` |
 | `internal_errors_to_stderr` | `bool` | Write logger's internal errors to stderr | `false` |
 
 ### Output Control
@@ -102,4 +104,3 @@ logger.Info("info txt log record written to /var/log/myapp.txt")
 | `heartbeat_interval_s` | `int64` | Heartbeat interval (seconds) | `60` |
 
 ---
-[← Getting Started](getting-started.md) | [← Back to README](../README.md) | [Configuration Builder →](config-builder.md)

@@ -1,4 +1,4 @@
-// FILE: lixenwraith/log/processor.go
+// FILE: lixenwraith/log/timer.go
 package log
 
 import "time"
@@ -26,20 +26,6 @@ func (l *Logger) setupProcessingTimers() *TimerSet {
 	timers.heartbeatChan = l.setupHeartbeatTimer(timers)
 
 	return timers
-}
-
-// closeProcessingTimers stops all active timers
-func (l *Logger) closeProcessingTimers(timers *TimerSet) {
-	timers.flushTicker.Stop()
-	if timers.diskCheckTicker != nil {
-		timers.diskCheckTicker.Stop()
-	}
-	if timers.retentionTicker != nil {
-		timers.retentionTicker.Stop()
-	}
-	if timers.heartbeatTicker != nil {
-		timers.heartbeatTicker.Stop()
-	}
 }
 
 // setupRetentionTimer configures the retention check timer if retention is enabled
@@ -97,4 +83,18 @@ func (l *Logger) setupHeartbeatTimer(timers *TimerSet) <-chan time.Time {
 		return timers.heartbeatTicker.C
 	}
 	return nil
+}
+
+// stopProcessingTimers stops all active timers
+func (l *Logger) stopProcessingTimers(timers *TimerSet) {
+	timers.flushTicker.Stop()
+	if timers.diskCheckTicker != nil {
+		timers.diskCheckTicker.Stop()
+	}
+	if timers.retentionTicker != nil {
+		timers.retentionTicker.Stop()
+	}
+	if timers.heartbeatTicker != nil {
+		timers.heartbeatTicker.Stop()
+	}
 }

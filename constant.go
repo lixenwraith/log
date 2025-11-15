@@ -3,6 +3,9 @@ package log
 
 import (
 	"time"
+
+	"github.com/lixenwraith/log/formatter"
+	"github.com/lixenwraith/log/sanitizer"
 )
 
 // Log level constants
@@ -22,11 +25,19 @@ const (
 
 // Record flags for controlling output structure
 const (
-	FlagRaw            int64 = 0b0001
-	FlagShowTimestamp  int64 = 0b0010
-	FlagShowLevel      int64 = 0b0100
-	FlagStructuredJSON int64 = 0b1000
-	FlagDefault              = FlagShowTimestamp | FlagShowLevel
+	FlagRaw            = formatter.FlagRaw // Bypasses both formatter and sanitizer
+	FlagShowTimestamp  = formatter.FlagShowTimestamp
+	FlagShowLevel      = formatter.FlagShowLevel
+	FlagStructuredJSON = formatter.FlagStructuredJSON
+	FlagDefault        = formatter.FlagDefault
+)
+
+// Sanitizer policies
+const (
+	PolicyRaw   = sanitizer.PolicyRaw
+	PolicyJSON  = sanitizer.PolicyJSON
+	PolicyTxt   = sanitizer.PolicyTxt
+	PolicyShell = sanitizer.PolicyShell
 )
 
 // Storage

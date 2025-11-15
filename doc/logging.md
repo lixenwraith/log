@@ -126,6 +126,8 @@ func logWithContext(ctx context.Context, logger *log.Logger, level string, msg s
 
 ## Output Formats
 
+The logger supports three output formats, each with configurable sanitization. For advanced formatting needs, see [Formatting & Sanitization](formatting.md) for standalone usage of the formatter and sanitizer packages.
+
 ### Txt Format (Human-Readable)
 
 Default format for development and debugging:
@@ -135,7 +137,7 @@ Default format for development and debugging:
 2024-01-15T10:30:45.234567890Z WARN Rate limit approaching user_id=42 requests=95 limit=100
 ```
 
-Note: The txt format adds quotes around non-string values (errors, stringers, complex types) when they contain spaces. Plain string arguments are not quoted. Control characters in strings are sanitized to hex representation. For logs requiring exact preservation of all values, `json` format is recommended.
+Note: The txt format applies the configured sanitization policy (default: raw). Non-printable characters can be hex-encoded using `sanitization=txt` configuration.
 
 Configuration:
 ```go
@@ -162,6 +164,20 @@ logger.ApplyConfigString(
     "show_timestamp=true",
     "show_level=true",
 )
+```
+
+### Raw Format (Unstructured)
+
+Outputs arguments as space-separated values without any metadata:
+
+```
+METRIC cpu_usage 85.5 timestamp 1234567890
+```
+
+Configuration:
+```go
+logger.ApplyConfigString("format=raw")
+// Or use logger.Write() method which forces raw output
 ```
 
 ## Function Tracing
@@ -334,6 +350,3 @@ func (m *MetricsCollector) logMetrics() {
     }
 }
 ```
-
----
-[← API Reference](api-reference.md) | [← Back to README](../README.md) | [Disk Management →](disk-management.md)

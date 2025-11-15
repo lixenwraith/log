@@ -28,7 +28,7 @@ type Config struct {
 	ShowTimestamp   bool                   `toml:"show_timestamp"`   // Add timestamp to log records
 	ShowLevel       bool                   `toml:"show_level"`       // Add level to log record
 	TimestampFormat string                 `toml:"timestamp_format"` // Time format for log timestamps
-	Sanitization    sanitizer.PolicyPreset `toml:"sanitization"`     // "default", "json", "txt", "shell"
+	Sanitization    sanitizer.PolicyPreset `toml:"sanitization"`     // "raw", "json", "txt", "shell"
 
 	// Buffer and size limits
 	BufferSize     int64 `toml:"buffer_size"`       // Channel buffer size
@@ -75,7 +75,7 @@ var defaultConfig = Config{
 	ShowTimestamp:   true,
 	ShowLevel:       true,
 	TimestampFormat: time.RFC3339Nano,
-	Sanitization:    sanitizer.PolicyTxt,
+	Sanitization:    PolicyTxt,
 
 	// Buffer and size limits
 	BufferSize:     1024,
@@ -128,7 +128,7 @@ func (c *Config) Validate() error {
 	}
 
 	switch c.Sanitization {
-	case sanitizer.PolicyRaw, sanitizer.PolicyJSON, sanitizer.PolicyTxt, sanitizer.PolicyShell:
+	case PolicyRaw, PolicyJSON, PolicyTxt, PolicyShell:
 		// valid policy
 	default:
 		return fmtErrorf("invalid sanitization policy: '%s' (use raw, json, txt, or shell)", c.Sanitization)

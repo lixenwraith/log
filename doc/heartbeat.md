@@ -163,6 +163,3 @@ With `format=txt`, heartbeats are human-readable:
 ```
 2024-01-15T10:30:00.123456789Z PROC type="proc" sequence=42 uptime_hours="24.50" processed_logs=1847293 dropped_logs=0
 ```
-
----
-[← Disk Management](disk-management.md) | [← Back to README](../README.md) | [Compatibility Adapters →](compatibility-adapters.md)

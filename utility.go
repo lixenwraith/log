@@ -59,7 +59,7 @@ func getTrace(depth int64, skip int) string {
 	return strings.Join(trace, " -> ")
 }
 
-// fmtErrorf wrapper
+// fmtErrorf wraps fmt.Errorf with a "log: " prefix
 func fmtErrorf(format string, args ...any) error {
 	if !strings.HasPrefix(format, "log: ") {
 		format = "log: " + format
@@ -67,18 +67,7 @@ func fmtErrorf(format string, args ...any) error {
 	return fmt.Errorf(format, args...)
 }
 
-// combineErrors helper
-func combineErrors(err1, err2 error) error {
-	if err1 == nil {
-		return err2
-	}
-	if err2 == nil {
-		return err1
-	}
-	return fmt.Errorf("%v; %w", err1, err2)
-}
-
-// parseKeyValue splits a "key=value" string
+// parseKeyValue splits a "key=value" string into its components
 func parseKeyValue(arg string) (string, string, error) {
 	parts := strings.SplitN(strings.TrimSpace(arg), "=", 2)
 	if len(parts) != 2 {
@@ -111,27 +100,5 @@ func Level(levelStr string) (int64, error) {
 		return LevelSys, nil
 	default:
 		return 0, fmtErrorf("invalid level string: '%s' (use debug, info, warn, error, proc, disk, sys)", levelStr)
-	}
-}
-
-// levelToString converts integer level values to string
-func levelToString(level int64) string {
-	switch level {
-	case LevelDebug:
-		return "DEBUG"
-	case LevelInfo:
-		return "INFO"
-	case LevelWarn:
-		return "WARN"
-	case LevelError:
-		return "ERROR"
-	case LevelProc:
-		return "PROC"
-	case LevelDisk:
-		return "DISK"
-	case LevelSys:
-		return "SYS"
-	default:
-		return fmt.Sprintf("LEVEL(%d)", level)
 	}
 }

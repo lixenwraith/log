@@ -1,5 +1,5 @@
-// FILE: lixenwraith/log/format.go
-package log
+// FILE: lixenwraith/log/formatter/formatter.go
+package formatter
 
 import (
 	"encoding/json"
@@ -11,42 +11,89 @@ import (
 	"github.com/lixenwraith/log/sanitizer"
 )
 
+// Format flags for controlling output structure
+const (
+	FlagRaw            int64 = 0b0001
+	FlagShowTimestamp  int64 = 0b0010
+	FlagShowLevel      int64 = 0b0100
+	FlagStructuredJSON int64 = 0b1000
+	FlagDefault              = FlagShowTimestamp | FlagShowLevel
+)
+
 // Formatter manages the buffered writing and formatting of log entries
 type Formatter struct {
-	format          string
-	buf             []byte
-	timestampFormat string
 	sanitizer       *sanitizer.Sanitizer
+	format          string
+	timestampFormat string
+	showTimestamp   bool
+	showLevel       bool
+	buf             []byte
 }
 
-// NewFormatter creates a formatter instance
-func NewFormatter(format string, bufferSize int64, timestampFormat string, sanitizationPolicy sanitizer.PolicyPreset) *Formatter {
-	if timestampFormat == "" {
-		timestampFormat = time.RFC3339Nano
+// New creates a formatter with the provided sanitizer
+func New(s ...*sanitizer.Sanitizer) *Formatter {
+	var san *sanitizer.Sanitizer
+	if len(s) > 0 && s[0] != nil {
+		san = s[0]
+	} else {
+		san = sanitizer.New() // Default passthrough sanitizer
 	}
-	if format == "" {
-		format = "txt"
-	}
-	if sanitizationPolicy == "" {
-		sanitizationPolicy = "raw"
-	}
-
-	s := (sanitizer.New()).Policy(sanitizationPolicy)
 	return &Formatter{
-		format:          format,
-		buf:             make([]byte, 0, bufferSize),
-		timestampFormat: timestampFormat,
-		sanitizer:       s,
+		sanitizer:       san,
+		format:          "txt",
+		timestampFormat: time.RFC3339Nano,
+		showTimestamp:   true,
+		showLevel:       true,
+		buf:             make([]byte, 0, 1024),
 	}
 }
 
-// Reset clears the formatter buffer for reuse
-func (f *Formatter) Reset() {
-	f.buf = f.buf[:0]
+// Type sets the output format ("txt", "json", or "raw")
+func (f *Formatter) Type(format string) *Formatter {
+	f.format = format
+	return f
 }
 
-// Format converts log entries to the configured format
-func (f *Formatter) Format(format string, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
+// TimestampFormat sets the timestamp format string
+func (f *Formatter) TimestampFormat(format string) *Formatter {
+	if format != "" {
+		f.timestampFormat = format
+	}
+	return f
+}
+
+// ShowLevel sets whether to include level in output
+func (f *Formatter) ShowLevel(show bool) *Formatter {
+	f.showLevel = show
+	return f
+}
+
+// ShowTimestamp sets whether to include timestamp in output
+func (f *Formatter) ShowTimestamp(show bool) *Formatter {
+	f.showTimestamp = show
+	return f
+}
+
+// Format formats a log entry using configured options and explicit flags
+func (f *Formatter) Format(flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
+	// Override configured values with explicit flags
+	effectiveShowTimestamp := (flags&FlagShowTimestamp) != 0 || (flags == 0 && f.showTimestamp)
+	effectiveShowLevel := (flags&FlagShowLevel) != 0 || (flags == 0 && f.showLevel)
+
+	// Build effective flags
+	effectiveFlags := flags
+	if effectiveShowTimestamp {
+		effectiveFlags |= FlagShowTimestamp
+	}
+	if effectiveShowLevel {
+		effectiveFlags |= FlagShowLevel
+	}
+
+	return f.FormatWithOptions(f.format, effectiveFlags, timestamp, level, trace, args)
+}
+
+// FormatWithOptions formats with explicit format and flags, ignoring configured values
+func (f *Formatter) FormatWithOptions(format string, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
 	f.Reset()
 
 	// FlagRaw completely bypasses formatting and sanitization
@@ -109,6 +156,33 @@ func (f *Formatter) FormatArgs(args ...any) []byte {
 		f.convertValue(&f.buf, arg, serializer, i > 0)
 	}
 	return f.buf
+}
+
+// Reset clears the formatter buffer for reuse
+func (f *Formatter) Reset() {
+	f.buf = f.buf[:0]
+}
+
+// LevelToString converts integer level values to string
+func LevelToString(level int64) string {
+	switch level {
+	case -4:
+		return "DEBUG"
+	case 0:
+		return "INFO"
+	case 4:
+		return "WARN"
+	case 8:
+		return "ERROR"
+	case 12:
+		return "PROC"
+	case 16:
+		return "DISK"
+	case 20:
+		return "SYS"
+	default:
+		return fmt.Sprintf("LEVEL(%d)", level)
+	}
 }
 
 // convertValue provides unified type conversion
@@ -191,7 +265,7 @@ func (f *Formatter) formatJSON(flags int64, timestamp time.Time, level int64, tr
 			f.buf = append(f.buf, ',')
 		}
 		f.buf = append(f.buf, `"level":"`...)
-		f.buf = append(f.buf, levelToString(level)...)
+		f.buf = append(f.buf, LevelToString(level)...)
 		f.buf = append(f.buf, '"')
 		needsComma = true
 	}
@@ -265,7 +339,7 @@ func (f *Formatter) formatTxt(flags int64, timestamp time.Time, level int64, tra
 		if needsSpace {
 			f.buf = append(f.buf, ' ')
 		}
-		f.buf = append(f.buf, levelToString(level)...)
+		f.buf = append(f.buf, LevelToString(level)...)
 		needsSpace = true
 	}
 

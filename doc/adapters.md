@@ -350,6 +350,3 @@ func requestLogger(adapter *compat.FastHTTPAdapter) fasthttp.RequestHandler {
     }
 }
 ```
-
----
-[← Heartbeat Monitoring](heartbeat-monitoring.md) | [← Back to README](../README.md)

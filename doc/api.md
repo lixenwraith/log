@@ -327,6 +327,33 @@ Converts level string to numeric constant.
 level, err := log.Level("debug")  // Returns -4
 ```
 
+### Format Flags
+
+```go
+const (
+    FlagRaw            = formatter.FlagRaw            // Bypass formatting
+    FlagShowTimestamp  = formatter.FlagShowTimestamp  // Include timestamp
+    FlagShowLevel      = formatter.FlagShowLevel      // Include level
+    FlagStructuredJSON = formatter.FlagStructuredJSON // Structured JSON
+    FlagDefault        = formatter.FlagDefault        // Default flags
+)
+```
+
+Control output formatting behavior. These flags are re-exported from the formatter package.
+
+### Sanitization Policies
+
+```go
+const (
+    PolicyRaw   = sanitizer.PolicyRaw   // No sanitization
+    PolicyJSON  = sanitizer.PolicyJSON  // JSON-safe output
+    PolicyTxt   = sanitizer.PolicyTxt   // Text file safe
+    PolicyShell = sanitizer.PolicyShell // Shell-safe output
+)
+```
+
+Pre-configured sanitization policies. These are re-exported from the sanitizer package.
+
 ## Error Types
 
 The logger returns errors prefixed with "log: " for easy identification:
@@ -386,6 +413,3 @@ func (s *Service) Shutdown() error {
     return s.logger.Shutdown(5 * time.Second)
 }
 ```
-
----
-[← Configuration Builder](config-builder.md) | [← Back to README](../README.md) | [Logging Guide →](logging-guide.md)

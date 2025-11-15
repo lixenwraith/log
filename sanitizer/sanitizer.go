@@ -33,7 +33,7 @@ const (
 type PolicyPreset string
 
 const (
-	PolicyRaw   PolicyPreset = "raw"   // Default is a no-op (passthrough)
+	PolicyRaw   PolicyPreset = "raw"   // Raw is a no-op (passthrough)
 	PolicyJSON  PolicyPreset = "json"  // Policy for sanitizing strings to be embedded in JSON
 	PolicyTxt   PolicyPreset = "txt"   // Policy for sanitizing text written to log files
 	PolicyShell PolicyPreset = "shell" // Policy for sanitizing arguments passed to shell commands
@@ -81,7 +81,7 @@ func New() *Sanitizer {
 	}
 }
 
-// Rule adds a custom rule to the sanitizer (prepended for precedence)
+// Rule adds a custom rule to the sanitizer (appended, earliest rule applies first)
 func (s *Sanitizer) Rule(filter uint64, transform uint64) *Sanitizer {
 	// Append rule in natural order
 	s.rules = append(s.rules, rule{filter: filter, transform: transform})
@@ -263,6 +263,7 @@ func (se *Serializer) WriteNil(buf *[]byte) {
 // WriteComplex writes complex types
 func (se *Serializer) WriteComplex(buf *[]byte, v any) {
 	switch se.format {
+	// For debugging
 	case "raw":
 		var b bytes.Buffer
 		dumper := &spew.ConfigState{

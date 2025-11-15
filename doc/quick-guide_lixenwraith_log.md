@@ -1,47 +1,51 @@
+I'll search the project knowledge to understand the current state of the log package and update the quick-guide documentation accordingly.# FILE: doc/quick-guide_lixenwraith_log.md
+
 # lixenwraith/log Quick Reference Guide
 
-This guide details the `lixenwraith/log` package, a high-performance, buffered, rotating file logger for Go with built-in disk management, operational monitoring, and framework compatibility adapters.
+High-performance buffered rotating file logger with disk management, operational monitoring, and exported formatter/sanitizer packages.
 
 ## Quick Start: Recommended Usage
 
-The recommended pattern uses the **Builder** with type-safe configuration. This provides compile-time safety and eliminates runtime errors.
+Builder pattern with type-safe configuration (compile-time safety, no runtime errors):
 
 ```go
 package main
 
 import (
-	"fmt"
-	"time"
-	
-	"github.com/lixenwraith/log"
+    "fmt"
+    "os"
+    "time"
+    
+    "github.com/lixenwraith/log"
 )
 
 func main() {
-	// 1. Use the builder pattern for configuration (recommended).
-	logger, err := log.NewBuilder().
-		Directory("/var/log/myapp").     // Log directory path
-		LevelString("info").              // Minimum log level
-		Format("json").                   // Output format
-		BufferSize(2048).                 // Channel buffer size
-		MaxSizeMB(10).                    // Max file size before rotation
-		HeartbeatLevel(1).                // Enable operational monitoring
-		HeartbeatIntervalS(300).          // Every 5 minutes
-		Build()                           // Build the logger instance
-	if err != nil {
-		panic(fmt.Errorf("logger build failed: %w", err))
-	}
-	defer logger.Shutdown(5 * time.Second)
+    // Build logger with configuration
+    logger, err := log.NewBuilder().
+        Directory("/var/log/myapp").      // Log directory path
+        LevelString("info").               // Minimum log level
+        Format("json").                    // Output format
+        Sanitization("json").              // Sanitization policy
+        BufferSize(2048).                  // Channel buffer size
+        MaxSizeMB(10).                     // Max file size before rotation
+        HeartbeatLevel(1).                 // Enable operational monitoring
+        HeartbeatIntervalS(300).          // Every 5 minutes
+        Build()                            // Build the logger instance
+    if err != nil {
+        panic(fmt.Errorf("logger build failed: %w", err))
+    }
+    defer logger.Shutdown(5 * time.Second)
 
-	// 2. Start the logger (required before logging).
-	if err := logger.Start(); err != nil {
-		panic(fmt.Errorf("logger start failed: %w", err))
-	}
+    // Start the logger (required before logging)
+    if err := logger.Start(); err != nil {
+        panic(fmt.Errorf("logger start failed: %w", err))
+    }
 
-	// 3. Begin logging with structured key-value pairs.
-	logger.Info("Application started", "version", "1.0.0", "pid", os.Getpid())
-	logger.Debug("Debug information", "user_id", 12345)
-	logger.Warn("High memory usage", "used_mb", 1800, "limit_mb", 2048)
-	logger.Error("Connection failed", "host", "db.example.com", "error", err)
+    // Begin logging with structured key-value pairs
+    logger.Info("Application started", "version", "1.0.0", "pid", os.Getpid())
+    logger.Debug("Debug information", "user_id", 12345)
+    logger.Warn("High memory usage", "used_mb", 1800, "limit_mb", 2048)
+    logger.Error("Connection failed", "host", "db.example.com", "error", err)
 }
 ```
 
@@ -52,13 +56,14 @@ func main() {
 ```go
 logger := log.NewLogger()
 err := logger.ApplyConfigString(
-	"directory=/var/log/app",
-	"format=json",
-	"level=debug",
-	"max_size_kb=5000",
+    "directory=/var/log/app",
+    "format=json",
+    "sanitization=json",
+    "level=debug",
+    "max_size_kb=5000",
 )
 if err != nil {
-	return fmt.Errorf("config failed: %w", err)
+    return fmt.Errorf("config failed: %w", err)
 }
 defer logger.Shutdown()
 logger.Start()
@@ -71,12 +76,13 @@ logger := log.NewLogger()
 cfg := log.DefaultConfig()
 cfg.Directory = "/var/log/app"
 cfg.Format = "json"
+cfg.Sanitization = log.PolicyJSON
 cfg.Level = log.LevelDebug
 cfg.MaxSizeKB = 5000
 cfg.HeartbeatLevel = 2  // Process + disk stats
 err := logger.ApplyConfig(cfg)
 if err != nil {
-	return fmt.Errorf("config failed: %w", err)
+    return fmt.Errorf("config failed: %w", err)
 }
 defer logger.Shutdown()
 logger.Start()
@@ -84,12 +90,8 @@ logger.Start()
 
 ## Builder Pattern
 
-The `Builder` is the primary way to construct a `Logger` instance with compile-time safety.
-
 ```go
-// NewBuilder creates a new logger builder.
 func NewBuilder() *Builder
-// Build finalizes configuration and creates the logger.
 func (b *Builder) Build() (*Logger, error)
 ```
 
@@ -103,6 +105,7 @@ All builder methods return `*Builder` for chaining.
 - `Directory(dir string)`: Set log directory path
 - `Name(name string)`: Set base filename (default: "log")
 - `Format(format string)`: Set format ("txt", "json", "raw")
+- `Sanitization(policy string)`: Set sanitization policy ("txt", "json", "raw", "shell")
 - `Extension(ext string)`: Set file extension (default: ".log")
 
 **Buffer and Performance:**
@@ -222,6 +225,17 @@ const (
 )
 ```
 
+### Sanitization Policies
+
+```go
+const (
+    PolicyRaw   = "raw"   // No-op passthrough
+    PolicyJSON  = "json"  // JSON-safe output
+    PolicyTxt   = "txt"   // Text file safe
+    PolicyShell = "shell" // Shell-safe output
+)
+```
+
 ### Level Helper
 
 ```go
@@ -229,93 +243,67 @@ func Level(levelStr string) (int64, error)
 ```
 Converts level string to numeric constant: "debug", "info", "warn", "error", "proc", "disk", "sys".
 
-## Configuration Structure
-
-```go
-type Config struct {
-    // Output Settings
-    EnableConsole bool    // Enable stdout/stderr output
-    ConsoleTarget string  // "stdout", "stderr", or "split"
-    EnableFile    bool    // Enable file output
-    
-    // Basic Settings
-    Level     int64   // Minimum log level
-    Name      string  // Base filename (default: "log")
-    Directory string  // Log directory path
-    Format    string  // "txt", "json", or "raw"
-    Extension string  // File extension (default: ".log")
-    
-    // Formatting
-    ShowTimestamp   bool   // Add timestamps
-    ShowLevel       bool   // Add level labels
-    TimestampFormat string // Go time format
-    
-    // Buffer and Performance
-    BufferSize      int64 // Channel buffer size
-    FlushIntervalMs int64 // Buffer flush interval
-    TraceDepth      int64 // Default trace depth (0-10)
-    
-    // File Management
-    MaxSizeKB       int64   // Max file size (KB)
-    MaxTotalSizeKB  int64   // Max total directory size (KB)
-    MinDiskFreeKB   int64   // Required free disk space (KB)
-    RetentionPeriodHrs float64 // Hours to keep logs
-    RetentionCheckMins float64 // Retention check interval
-    
-    // Disk Monitoring
-    DiskCheckIntervalMs    int64 // Base check interval
-    EnableAdaptiveInterval bool  // Adjust based on load
-    MinCheckIntervalMs     int64 // Minimum interval
-    MaxCheckIntervalMs     int64 // Maximum interval
-    EnablePeriodicSync     bool  // Periodic disk sync
-    
-    // Heartbeat
-    HeartbeatLevel     int64 // 0=off, 1=proc, 2=+disk, 3=+sys
-    HeartbeatIntervalS int64 // Heartbeat interval
-    
-    // Error Handling
-    InternalErrorsToStderr bool // Write internal errors to stderr
-}
-```
-
-### Default Configuration
-
-```go
-func DefaultConfig() *Config
-```
-
-Returns default configuration with sensible values:
-- Console output enabled to stdout
-- File output enabled
-- Info level logging
-- 1MB max file size
-- 5MB max total size
-- 100ms flush interval
-
 ## Output Formats
-
-### Text Format (default)
-
-Human-readable format with optional timestamps and levels:
-```
-2024-01-15T10:30:00.123456Z INFO Application started version="1.0.0" pid=1234
-2024-01-15T10:30:01.456789Z ERROR Connection failed host="db.example.com" error="timeout"
-```
 
 ### JSON Format
 
-Structured JSON output for log aggregation:
 ```json
-{"time":"2024-01-15T10:30:00.123456Z","level":"INFO","fields":["Application started","version","1.0.0","pid",1234]}
-{"time":"2024-01-15T10:30:01.456789Z","level":"ERROR","fields":["Connection failed","host","db.example.com","error","timeout"]}
+{"timestamp":"2024-01-01T12:00:00Z","level":"INFO","fields":["Application started","version","1.0.0"]}
 ```
 
-### Raw Format
+### TXT Format
+
+```
+2024-01-01T12:00:00Z INFO Application started version="1.0.0" pid=1234
+```
+
+### RAW Format
 
 Minimal format without timestamps or levels:
 ```
 Application started version="1.0.0" pid=1234
 Connection failed host="db.example.com" error="timeout"
+```
+
+## Standalone Formatter/Sanitizer Packages
+
+### Formatter Package
+
+```go
+import (
+    "time"
+    "github.com/lixenwraith/log/formatter"
+    "github.com/lixenwraith/log/sanitizer"
+)
+
+// Create formatter with sanitizer
+s := sanitizer.New().Policy(sanitizer.PolicyJSON)
+f := formatter.New(s)
+
+// Configure and format
+f.Type("json").ShowTimestamp(true)
+data := f.Format(
+    formatter.FlagDefault,
+    time.Now(),
+    0,  // Info level
+    "", // No trace
+    []any{"User action", "user_id", 42},
+)
+```
+
+### Sanitizer Package
+
+```go
+import "github.com/lixenwraith/log/sanitizer"
+
+// Predefined policy
+s := sanitizer.New().Policy(sanitizer.PolicyJSON)
+clean := s.Sanitize("hello\nworld")  // "hello\\nworld"
+
+// Custom rules
+s = sanitizer.New().
+    Rule(sanitizer.FilterControl, sanitizer.TransformStrip).
+    Rule(sanitizer.FilterNonPrintable, sanitizer.TransformHexEncode)
 ```
 
 ## Framework Adapters (compat package)
@@ -450,6 +438,18 @@ logger.ApplyConfigString(
 )
 ```
 
+### Security-Focused Sanitization
+
+```go
+// User input logging with shell-safe sanitization
+userInput := getUserInput()
+s := sanitizer.New().Policy(sanitizer.PolicyShell)
+logger.Info("User command", "input", s.Sanitize(userInput))
+
+// Or configure logger-wide
+logger.ApplyConfigString("sanitization=shell")
+```
+
 ### Graceful Shutdown
 
 ```go
@@ -476,7 +476,7 @@ All public methods are thread-safe. The logger uses:
 
 ## Performance Characteristics
 
-- **Zero-allocation logging path**: Uses pre-allocated buffers
+- **Zero-allocation logging path**: Pre-allocated buffers
 - **Lock-free async design**: Non-blocking sends to buffered channel
 - **Adaptive disk checks**: Adjusts I/O based on load
 - **Batch writes**: Flushes buffer periodically, not per-record
@@ -511,3 +511,7 @@ logger.Info("User login", "id", id, "name", name)
 1. **Use Builder pattern** for configuration - compile-time safety
 2. **Use structured logging** - consistent key-value pairs
 3. **Use appropriate levels** - filter noise in logs
+4. **Configure sanitization** - prevent log injection attacks
+5. **Monitor heartbeats** - track logger health in production
+6. **Handle shutdown** - always call Shutdown() to flush logs
+7. **Use standalone packages** - reuse formatter/sanitizer for other needs

@@ -115,6 +115,3 @@ func loggingMiddleware(logger *log.Logger) func(http.Handler) http.Handler {
     }
 }
 ```
-
----
-[← Back to README](../README.md) | [Configuration →](configuration.md)

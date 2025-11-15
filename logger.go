@@ -2,12 +2,16 @@
 package log
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/lixenwraith/log/formatter"
+	"github.com/lixenwraith/log/sanitizer"
 )
 
 // Logger is the core struct that encapsulates all logger functionality
@@ -15,7 +19,7 @@ type Logger struct {
 	currentConfig atomic.Value // stores *Config
 	state         State
 	initMu        sync.Mutex
-	formatter     *Formatter
+	formatter     *formatter.Formatter
 }
 
 // NewLogger creates a new Logger instance with default settings
@@ -205,18 +209,18 @@ func (l *Logger) Shutdown(timeout ...time.Duration) error {
 		if currentLogFile, ok := cfPtr.(*os.File); ok && currentLogFile != nil {
 			if err := currentLogFile.Sync(); err != nil {
 				syncErr := fmtErrorf("failed to sync log file '%s' during shutdown: %w", currentLogFile.Name(), err)
-				finalErr = combineErrors(finalErr, syncErr)
+				finalErr = errors.Join(finalErr, syncErr)
 			}
 			if err := currentLogFile.Close(); err != nil {
 				closeErr := fmtErrorf("failed to close log file '%s' during shutdown: %w", currentLogFile.Name(), err)
-				finalErr = combineErrors(finalErr, closeErr)
+				finalErr = errors.Join(finalErr, closeErr)
 			}
 			l.state.CurrentFile.Store((*os.File)(nil))
 		}
 	}
 
 	if stopErr != nil {
-		finalErr = combineErrors(finalErr, stopErr)
+		finalErr = errors.Join(finalErr, stopErr)
 	}
 
 	return finalErr
@@ -341,7 +345,13 @@ func (l *Logger) applyConfig(cfg *Config) error {
 	oldCfg := l.getConfig()
 	l.currentConfig.Store(cfg)
 
-	l.formatter = NewFormatter(cfg.Format, cfg.BufferSize, cfg.TimestampFormat, cfg.Sanitization)
+	// Create formatter with sanitizer
+	s := sanitizer.New().Policy(cfg.Sanitization)
+	l.formatter = formatter.New(s).
+		Type(cfg.Format).
+		TimestampFormat(cfg.TimestampFormat).
+		ShowLevel(cfg.ShowLevel).
+		ShowTimestamp(cfg.ShowTimestamp)
 
 	// Ensure log directory exists if file output is enabled
 	if cfg.EnableFile {

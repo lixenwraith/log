@@ -181,6 +181,3 @@ ls -t /var/log/myapp/*.log | tail -n 20 | xargs rm
 # Verify space
 df -h /var/log
 ```
-
----
-[← Logging Guide](logging-guide.md) | [← Back to README](../README.md) | [Heartbeat Monitoring →](heartbeat-monitoring.md)
