@@ -1,4 +1,4 @@
-# lixenwraith/log LLM Usage Guide
+# lixenwraith/log Quick Reference Guide
 
 This guide details the `lixenwraith/log` package, a high-performance, buffered, rotating file logger for Go with built-in disk management, operational monitoring, and framework compatibility adapters.
 
@@ -161,10 +161,10 @@ func (l *Logger) GetConfig() *Config
 ### Lifecycle Methods
 
 ```go
-func (l *Logger) Start() error                      // Start log processing
-func (l *Logger) Stop(timeout ...time.Duration) error    // Stop (can restart)
+func (l *Logger) Start() error                            // Start log processing
+func (l *Logger) Stop(timeout ...time.Duration) error     // Stop (can restart)
 func (l *Logger) Shutdown(timeout ...time.Duration) error // Terminal shutdown
-func (l *Logger) Flush(timeout time.Duration) error      // Force buffer flush
+func (l *Logger) Flush(timeout time.Duration) error       // Force buffer flush
 ```
 
 ### Standard Logging Methods

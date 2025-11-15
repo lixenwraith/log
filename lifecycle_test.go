@@ -100,7 +100,8 @@ func TestStopReconfigureRestart(t *testing.T) {
 	require.NoError(t, err)
 	strContent := string(content)
 
-	assert.Contains(t, strContent, "INFO first message", "Should contain the log from the first configuration")
+	// assert.Contains(t, strContent, "INFO first message", "Should contain the log from the first configuration")
+	assert.Contains(t, strContent, `INFO "first message"`, "Should contain the log from the first configuration")
 	assert.Contains(t, strContent, `"fields":["second message"]`, "Should contain the log from the second (JSON) configuration")
 }
 

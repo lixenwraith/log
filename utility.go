@@ -113,3 +113,25 @@ func Level(levelStr string) (int64, error) {
 		return 0, fmtErrorf("invalid level string: '%s' (use debug, info, warn, error, proc, disk, sys)", levelStr)
 	}
 }
+
+// levelToString converts integer level values to string
+func levelToString(level int64) string {
+	switch level {
+	case LevelDebug:
+		return "DEBUG"
+	case LevelInfo:
+		return "INFO"
+	case LevelWarn:
+		return "WARN"
+	case LevelError:
+		return "ERROR"
+	case LevelProc:
+		return "PROC"
+	case LevelDisk:
+		return "DISK"
+	case LevelSys:
+		return "SYS"
+	default:
+		return fmt.Sprintf("LEVEL(%d)", level)
+	}
+}

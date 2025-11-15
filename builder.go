@@ -1,6 +1,10 @@
 // FILE: lixenwraith/log/builder.go
 package log
 
+import (
+	"github.com/lixenwraith/log/sanitizer"
+)
+
 // Builder provides a fluent API for building logger configurations
 // It wraps a Config instance and provides chainable methods for setting values
 type Builder struct {
@@ -67,6 +71,12 @@ func (b *Builder) Directory(dir string) *Builder {
 // Format sets the output format
 func (b *Builder) Format(format string) *Builder {
 	b.cfg.Format = format
+	return b
+}
+
+// Sanitization sets the sanitization mode
+func (b *Builder) Sanitization(mode sanitizer.Mode) *Builder {
+	b.cfg.Sanitization = mode
 	return b
 }
 

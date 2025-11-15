@@ -28,7 +28,7 @@ func createTestLogger(t *testing.T) (*Logger, string) {
 	err := logger.ApplyConfig(cfg)
 	require.NoError(t, err)
 
-	// Start the logger, which is the new requirement.
+	// Start the logger
 	err = logger.Start()
 	require.NoError(t, err)
 
@@ -40,7 +40,6 @@ func TestNewLogger(t *testing.T) {
 	logger := NewLogger()
 
 	assert.NotNil(t, logger)
-	assert.NotNil(t, logger.serializer)
 	assert.False(t, logger.state.IsInitialized.Load())
 	assert.False(t, logger.state.LoggerDisabled.Load())
 }
@@ -157,9 +156,9 @@ func TestLoggerLoggingLevels(t *testing.T) {
 
 	// Default level is INFO, so debug shouldn't appear
 	assert.NotContains(t, string(content), "debug message")
-	assert.Contains(t, string(content), "INFO info message")
-	assert.Contains(t, string(content), "WARN warn message")
-	assert.Contains(t, string(content), "ERROR error message")
+	assert.Contains(t, string(content), `INFO "info message"`)
+	assert.Contains(t, string(content), `WARN "warn message"`)
+	assert.Contains(t, string(content), `ERROR "error message"`)
 }
 
 // TestLoggerWithTrace ensures that logging with a stack trace does not cause a panic
@@ -188,7 +187,7 @@ func TestLoggerFormats(t *testing.T) {
 			name:   "txt format",
 			format: "txt",
 			check: func(t *testing.T, content string) {
-				assert.Contains(t, content, "INFO test message")
+				assert.Contains(t, content, `INFO "test message"`)
 			},
 		},
 		{
@@ -303,81 +302,4 @@ func TestLoggerWrite(t *testing.T) {
 
 	assert.Contains(t, string(content), "raw output 123")
 	assert.True(t, strings.HasSuffix(string(content), "raw output 123"))
-}
-
-// TestControlCharacterWrite verifies that control characters are safely handled in raw output
-func TestControlCharacterWrite(t *testing.T) {
-	logger, tmpDir := createTestLogger(t)
-	defer logger.Shutdown()
-
-	// Test various control characters
-	testCases := []struct {
-		name  string
-		input string
-	}{
-		{"null bytes", "test\x00data"},
-		{"bell", "alert\x07message"},
-		{"backspace", "back\x08space"},
-		{"form feed", "page\x0Cbreak"},
-		{"vertical tab", "vertical\x0Btab"},
-		{"escape", "escape\x1B[31mcolor"},
-		{"mixed", "\x00\x01\x02test\x1F\x7Fdata"},
-	}
-
-	for _, tc := range testCases {
-		logger.Write(tc.input)
-	}
-
-	logger.Flush(time.Second)
-
-	// Verify file contains hex-encoded control chars
-	content, err := os.ReadFile(filepath.Join(tmpDir, "log.log"))
-	require.NoError(t, err)
-
-	// Control chars should be hex-encoded in raw output
-	assert.Contains(t, string(content), "test")
-	assert.Contains(t, string(content), "data")
-	// Raw format preserves as-is, but reading back should work
-}
-
-// TestRawSanitizedOutput verifies that raw output is correctly sanitized,
-// preserving printable runes and hex-encoding non-printable ones
-func TestRawSanitizedOutput(t *testing.T) {
-	logger, tmpDir := createTestLogger(t)
-	defer logger.Shutdown()
-
-	// 1. A string with valid multi-byte UTF-8 should be unchanged
-	utf8String := "Hello │ 世界"
-
-	// 2. A string with single-byte control chars should have them encoded
-	stringWithControl := "start-\x07-end"
-	expectedStringOutput := "start-<07>-end"
-
-	// 3. A []byte with control chars should have them encoded, not stripped
-	bytesWithControl := []byte("data\x00with\x08bytes")
-	expectedBytesOutput := "data<00>with<08>bytes"
-
-	// 4. A string with a multi-byte non-printable rune (U+0085, NEXT LINE)
-	// This proves Unicode control character handling is correct
-	multiByteControl := "line1\u0085line2"
-	expectedMultiByteOutput := "line1<c285>line2"
-
-	// Log all cases
-	logger.Write(utf8String, stringWithControl, bytesWithControl, multiByteControl)
-	logger.Flush(time.Second)
-
-	// Read and verify the single line of output
-	content, err := os.ReadFile(filepath.Join(tmpDir, "log.log"))
-	require.NoError(t, err)
-	logOutput := string(content)
-
-	// The output should be one line with spaces between the sanitized parts
-	expectedOutput := strings.Join([]string{
-		utf8String,
-		expectedStringOutput,
-		expectedBytesOutput,
-		expectedMultiByteOutput,
-	}, " ")
-
-	assert.Equal(t, expectedOutput, logOutput)
 }

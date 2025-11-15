@@ -102,9 +102,9 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 		return 0
 	}
 
-	// Serialize the log entry once
+	// Format and serialize the log entry once
 	format := c.Format
-	data := l.serializer.serialize(
+	data := l.formatter.Format(
 		format,
 		record.Flags,
 		record.TimeStamp,

@@ -1,7 +1,9 @@
 // FILE: lixenwraith/log/constant.go
 package log
 
-import "time"
+import (
+	"time"
+)
 
 // Log level constants
 const (
@@ -27,16 +29,19 @@ const (
 	FlagDefault              = FlagShowTimestamp | FlagShowLevel
 )
 
+// Storage
 const (
 	// Threshold for triggering reactive disk check
 	reactiveCheckThresholdBytes int64 = 10 * 1024 * 1024
-	// Factors to adjust check interval
-	adaptiveIntervalFactor float64 = 1.5 // Slow down
-	adaptiveSpeedUpFactor  float64 = 0.8 // Speed up
-	// Minimum wait time used throughout the package
-	minWaitTime = 10 * time.Millisecond
 	// Size multiplier for KB, MB
 	sizeMultiplier = 1000
 )
 
-const hexChars = "0123456789abcdef"
+// Timers
+const (
+	// Minimum wait time used throughout the package
+	minWaitTime = 10 * time.Millisecond
+	// Factors to adjust check interval
+	adaptiveIntervalFactor float64 = 1.5 // Slow down
+	adaptiveSpeedUpFactor  float64 = 0.8 // Speed up
+)

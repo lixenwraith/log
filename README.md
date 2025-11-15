@@ -52,11 +52,6 @@ func main() {
 go get github.com/lixenwraith/log
 ```
 
-For configuration management support:
-```bash
-go get github.com/lixenwraith/config
-```
-
 ## Documentation
 
 - **[Getting Started](doc/getting-started.md)** - Installation and basic usage
@@ -67,7 +62,7 @@ go get github.com/lixenwraith/config
 - **[Disk Management](doc/storage.md)** - File rotation and cleanup
 - **[Heartbeat Monitoring](doc/heartbeat.md)** - Operational statistics
 - **[Compatibility Adapters](doc/adapters.md)** - Framework integrations
-- **[LLM Guide](doc/llm-guide_lixenwraith_log.md)** - Guide for LLM usage without full codebase
+- **[Quick Guide](doc/quick-guide_lixenwraith_log.md)** - Quick reference guide
 
 ## Architecture Overview
 

@@ -15,14 +15,12 @@ type Logger struct {
 	currentConfig atomic.Value // stores *Config
 	state         State
 	initMu        sync.Mutex
-	serializer    *serializer
+	formatter     *Formatter
 }
 
 // NewLogger creates a new Logger instance with default settings
 func NewLogger() *Logger {
-	l := &Logger{
-		serializer: newSerializer(),
-	}
+	l := &Logger{}
 
 	// Set default configuration
 	l.currentConfig.Store(DefaultConfig())
@@ -344,7 +342,7 @@ func (l *Logger) applyConfig(cfg *Config) error {
 	oldCfg := l.getConfig()
 	l.currentConfig.Store(cfg)
 
-	l.serializer.setTimestampFormat(cfg.TimestampFormat)
+	l.formatter = NewFormatter(cfg.Format, cfg.BufferSize, cfg.TimestampFormat, cfg.Sanitization)
 
 	// Ensure log directory exists if file output is enabled
 	if cfg.EnableFile {

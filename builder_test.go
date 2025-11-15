@@ -67,8 +67,8 @@ func TestBuilder_Build(t *testing.T) {
 
 	t.Run("apply config validation error", func(t *testing.T) {
 		// Use a configuration that will fail validation inside ApplyConfig,
-		// e.g., an invalid directory path that cannot be created.
-		// Note: on linux /root is not writable by non-root users.
+		// e.g., an invalid directory path that cannot be created
+		// Note: on linux /root is not writable by non-root users
 		invalidDir := filepath.Join("/root", "unwritable-log-test-dir")
 		logger, err := NewBuilder().
 			Directory(invalidDir).

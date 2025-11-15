@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lixenwraith/log/sanitizer"
 )
 
 // Config holds all logger configuration values
@@ -19,13 +21,14 @@ type Config struct {
 	Level     int64  `toml:"level"`     // Log records at or above this Level will be logged
 	Name      string `toml:"name"`      // Base name for log files
 	Directory string `toml:"directory"` // Directory for log files
-	Format    string `toml:"format"`    // "txt", "raw", or "json"
 	Extension string `toml:"extension"` // Log file extension
 
 	// Formatting
-	ShowTimestamp   bool   `toml:"show_timestamp"`   // Add timestamp to log records
-	ShowLevel       bool   `toml:"show_level"`       // Add level to log record
-	TimestampFormat string `toml:"timestamp_format"` // Time format for log timestamps
+	Format          string         `toml:"format"`           // "txt", "raw", or "json"
+	ShowTimestamp   bool           `toml:"show_timestamp"`   // Add timestamp to log records
+	ShowLevel       bool           `toml:"show_level"`       // Add level to log record
+	TimestampFormat string         `toml:"timestamp_format"` // Time format for log timestamps
+	Sanitization    sanitizer.Mode `toml:"sanitization"`     // 0=None, 1=HexEncode, 2=Strip, 3=Escape
 
 	// Buffer and size limits
 	BufferSize     int64 `toml:"buffer_size"`       // Channel buffer size
@@ -65,13 +68,14 @@ var defaultConfig = Config{
 	Level:     LevelInfo,
 	Name:      "log",
 	Directory: "./log",
-	Format:    "txt",
 	Extension: "log",
 
 	// Formatting
+	Format:          "txt",
 	ShowTimestamp:   true,
 	ShowLevel:       true,
 	TimestampFormat: time.RFC3339Nano,
+	Sanitization:    sanitizer.HexEncode,
 
 	// Buffer and size limits
 	BufferSize:     1024,
@@ -121,6 +125,11 @@ func (c *Config) Validate() error {
 
 	if c.Format != "txt" && c.Format != "json" && c.Format != "raw" {
 		return fmtErrorf("invalid format: '%s' (use txt, json, or raw)", c.Format)
+	}
+
+	// TODO: better bound check, implement validator in `sanitizer`
+	if c.Sanitization < 0 || c.Sanitization > sanitizer.Escape {
+		return fmtErrorf("invalid sanitization mode: '%d' (use 0=None, 1=HexEncode, 2=Strip, 3=Escape)", c.Sanitization)
 	}
 
 	if strings.HasPrefix(c.Extension, ".") {
@@ -175,8 +184,8 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// applyConfigField applies a single key-value override to a Config.
-// This is the core field mapping logic for string overrides.
+// applyConfigField applies a single key-value override to a Config
+// This is the core field mapping logic for string overrides
 func applyConfigField(cfg *Config, key, value string) error {
 	switch key {
 	// Basic settings
@@ -196,12 +205,12 @@ func applyConfigField(cfg *Config, key, value string) error {
 		cfg.Name = value
 	case "directory":
 		cfg.Directory = value
-	case "format":
-		cfg.Format = value
 	case "extension":
 		cfg.Extension = value
 
 	// Formatting
+	case "format":
+		cfg.Format = value
 	case "show_timestamp":
 		boolVal, err := strconv.ParseBool(value)
 		if err != nil {
@@ -216,6 +225,12 @@ func applyConfigField(cfg *Config, key, value string) error {
 		cfg.ShowLevel = boolVal
 	case "timestamp_format":
 		cfg.TimestampFormat = value
+	case "sanitization":
+		intVal, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return fmtErrorf("invalid integer value for sanitization '%s': %w", value, err)
+		}
+		cfg.Sanitization = sanitizer.Mode(intVal)
 
 	// Buffer and size limits
 	case "buffer_size":
