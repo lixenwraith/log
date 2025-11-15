@@ -22,9 +22,9 @@ const (
 
 // Record flags for controlling output structure
 const (
-	FlagShowTimestamp  int64 = 0b0001
-	FlagShowLevel      int64 = 0b0010
-	FlagRaw            int64 = 0b0100
+	FlagRaw            int64 = 0b0001
+	FlagShowTimestamp  int64 = 0b0010
+	FlagShowLevel      int64 = 0b0100
 	FlagStructuredJSON int64 = 0b1000
 	FlagDefault              = FlagShowTimestamp | FlagShowLevel
 )

@@ -24,11 +24,11 @@ type Config struct {
 	Extension string `toml:"extension"` // Log file extension
 
 	// Formatting
-	Format          string         `toml:"format"`           // "txt", "raw", or "json"
-	ShowTimestamp   bool           `toml:"show_timestamp"`   // Add timestamp to log records
-	ShowLevel       bool           `toml:"show_level"`       // Add level to log record
-	TimestampFormat string         `toml:"timestamp_format"` // Time format for log timestamps
-	Sanitization    sanitizer.Mode `toml:"sanitization"`     // 0=None, 1=HexEncode, 2=Strip, 3=Escape
+	Format          string                 `toml:"format"`           // "txt", "raw", or "json"
+	ShowTimestamp   bool                   `toml:"show_timestamp"`   // Add timestamp to log records
+	ShowLevel       bool                   `toml:"show_level"`       // Add level to log record
+	TimestampFormat string                 `toml:"timestamp_format"` // Time format for log timestamps
+	Sanitization    sanitizer.PolicyPreset `toml:"sanitization"`     // "default", "json", "txt", "shell"
 
 	// Buffer and size limits
 	BufferSize     int64 `toml:"buffer_size"`       // Channel buffer size
@@ -75,7 +75,7 @@ var defaultConfig = Config{
 	ShowTimestamp:   true,
 	ShowLevel:       true,
 	TimestampFormat: time.RFC3339Nano,
-	Sanitization:    sanitizer.HexEncode,
+	Sanitization:    sanitizer.PolicyTxt,
 
 	// Buffer and size limits
 	BufferSize:     1024,
@@ -127,9 +127,11 @@ func (c *Config) Validate() error {
 		return fmtErrorf("invalid format: '%s' (use txt, json, or raw)", c.Format)
 	}
 
-	// TODO: better bound check, implement validator in `sanitizer`
-	if c.Sanitization < 0 || c.Sanitization > sanitizer.Escape {
-		return fmtErrorf("invalid sanitization mode: '%d' (use 0=None, 1=HexEncode, 2=Strip, 3=Escape)", c.Sanitization)
+	switch c.Sanitization {
+	case sanitizer.PolicyRaw, sanitizer.PolicyJSON, sanitizer.PolicyTxt, sanitizer.PolicyShell:
+		// valid policy
+	default:
+		return fmtErrorf("invalid sanitization policy: '%s' (use raw, json, txt, or shell)", c.Sanitization)
 	}
 
 	if strings.HasPrefix(c.Extension, ".") {
@@ -226,11 +228,7 @@ func applyConfigField(cfg *Config, key, value string) error {
 	case "timestamp_format":
 		cfg.TimestampFormat = value
 	case "sanitization":
-		intVal, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return fmtErrorf("invalid integer value for sanitization '%s': %w", value, err)
-		}
-		cfg.Sanitization = sanitizer.Mode(intVal)
+		cfg.Sanitization = sanitizer.PolicyPreset(value)
 
 	// Buffer and size limits
 	case "buffer_size":

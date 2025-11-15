@@ -1,4 +1,6 @@
 // FILE: lixenwraith/log/sanitizer/sanitizer.go
+// Package sanitizer provides a fluent and composable interface for sanitizing
+// strings based on configurable rules using bitwise filter flags and transforms.
 package sanitizer
 
 import (
@@ -12,105 +14,186 @@ import (
 	"github.com/davecgh/go-spew/spew"
 )
 
-// Mode controls how non-printable characters are handled
-type Mode int
-
-// Sanitization modes
+// Filter flags for character matching
 const (
-	None      Mode = iota // No sanitization
-	HexEncode             // Encode as <hex> (current default)
-	Strip                 // Remove control characters
-	Escape                // JSON-style escaping
+	FilterNonPrintable uint64 = 1 << iota // Matches runes not classified as printable by strconv.IsPrint
+	FilterControl                         // Matches control characters (unicode.IsControl)
+	FilterWhitespace                      // Matches whitespace characters (unicode.IsSpace)
+	FilterShellSpecial                    // Matches common shell metacharacters: '`', '$', ';', '|', '&', '>', '<', '(', ')', '#'
 )
 
-// Sanitizer provides centralized sanitization logic
-type Sanitizer struct {
-	mode Mode
-	buf  []byte // Reusable buffer
+// Transform flags for character transformation
+const (
+	TransformStrip      uint64 = 1 << iota // Removes the character
+	TransformHexEncode                     // Encodes the character's UTF-8 bytes as "<XXYY>"
+	TransformJSONEscape                    // Escapes the character with JSON-style backslashes (e.g., '\n', '\u0000')
+)
+
+// PolicyPreset defines pre-configured sanitization policies
+type PolicyPreset string
+
+const (
+	PolicyRaw   PolicyPreset = "raw"   // Default is a no-op (passthrough)
+	PolicyJSON  PolicyPreset = "json"  // Policy for sanitizing strings to be embedded in JSON
+	PolicyTxt   PolicyPreset = "txt"   // Policy for sanitizing text written to log files
+	PolicyShell PolicyPreset = "shell" // Policy for sanitizing arguments passed to shell commands
+)
+
+// rule represents a single sanitization rule
+type rule struct {
+	filter    uint64
+	transform uint64
 }
 
-func New(mode Mode) *Sanitizer {
-	return &Sanitizer{
-		mode: mode,
-		buf:  make([]byte, 0, 256),
-	}
+// policyRules contains pre-configured rules for each policy
+var policyRules = map[PolicyPreset][]rule{
+	PolicyRaw:   {},
+	PolicyTxt:   {{filter: FilterNonPrintable, transform: TransformHexEncode}},
+	PolicyJSON:  {{filter: FilterControl, transform: TransformJSONEscape}},
+	PolicyShell: {{filter: FilterShellSpecial | FilterWhitespace, transform: TransformStrip}},
 }
 
-func (s *Sanitizer) Reset() {
-	s.buf = s.buf[:0]
-}
-
-func (s *Sanitizer) Sanitize(data string) string {
-	if s.mode == None {
-		return data
-	}
-
-	s.Reset()
-
-	for _, r := range data {
-		if strconv.IsPrint(r) {
-			s.buf = utf8.AppendRune(s.buf, r)
-			continue
+// filterCheckers maps individual filter flags to their check functions
+var filterCheckers = map[uint64]func(rune) bool{
+	FilterNonPrintable: func(r rune) bool { return !strconv.IsPrint(r) },
+	FilterControl:      unicode.IsControl,
+	FilterWhitespace:   unicode.IsSpace,
+	FilterShellSpecial: func(r rune) bool {
+		switch r {
+		case '`', '$', ';', '|', '&', '>', '<', '(', ')', '#':
+			return true
 		}
+		return false
+	},
+}
 
-		switch s.mode {
-		case HexEncode:
-			var runeBytes [utf8.UTFMax]byte
-			n := utf8.EncodeRune(runeBytes[:], r)
-			s.buf = append(s.buf, '<')
-			s.buf = append(s.buf, hex.EncodeToString(runeBytes[:n])...)
-			s.buf = append(s.buf, '>')
+// Sanitizer provides chainable text sanitization
+type Sanitizer struct {
+	rules []rule
+	buf   []byte
+}
 
-		case Strip:
-			// Skip non-printable
-			continue
+// New creates a new Sanitizer instance
+func New() *Sanitizer {
+	return &Sanitizer{
+		rules: []rule{},
+		buf:   make([]byte, 0, 256),
+	}
+}
 
-		case Escape:
-			switch r {
-			case '\n':
-				s.buf = append(s.buf, '\\', 'n')
-			case '\r':
-				s.buf = append(s.buf, '\\', 'r')
-			case '\t':
-				s.buf = append(s.buf, '\\', 't')
-			case '\b':
-				s.buf = append(s.buf, '\\', 'b')
-			case '\f':
-				s.buf = append(s.buf, '\\', 'f')
-			default:
-				// Unicode escape for other control chars
-				s.buf = append(s.buf, '\\', 'u')
-				s.buf = append(s.buf, fmt.Sprintf("%04x", r)...)
+// Rule adds a custom rule to the sanitizer (prepended for precedence)
+func (s *Sanitizer) Rule(filter uint64, transform uint64) *Sanitizer {
+	// Append rule in natural order
+	s.rules = append(s.rules, rule{filter: filter, transform: transform})
+	return s
+}
+
+// Policy applies a pre-configured policy to the sanitizer (appended)
+func (s *Sanitizer) Policy(preset PolicyPreset) *Sanitizer {
+	if rules, ok := policyRules[preset]; ok {
+		s.rules = append(s.rules, rules...)
+	}
+	return s
+}
+
+// Sanitize applies all configured rules to the input string
+func (s *Sanitizer) Sanitize(data string) string {
+	// Reset buffer
+	s.buf = s.buf[:0]
+
+	// Process each rune
+	for _, r := range data {
+		matched := false
+		// Check rules in order (first match wins)
+		for _, rl := range s.rules {
+			if matchesFilter(r, rl.filter) {
+				applyTransform(&s.buf, r, rl.transform)
+				matched = true
+				break
 			}
+		}
+		// If no rule matched, append original rune
+		if !matched {
+			s.buf = utf8.AppendRune(s.buf, r)
 		}
 	}
 
 	return string(s.buf)
 }
 
-// UnifiedHandler implements all format behaviors in a single struct
-type UnifiedHandler struct {
+// matchesFilter checks if a rune matches any filter in the mask
+func matchesFilter(r rune, filterMask uint64) bool {
+	for flag, checker := range filterCheckers {
+		if (filterMask&flag) != 0 && checker(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// applyTransform applies the specified transform to the buffer
+func applyTransform(buf *[]byte, r rune, transformMask uint64) {
+	switch {
+	case (transformMask & TransformStrip) != 0:
+		// Do nothing (strip)
+
+	case (transformMask & TransformHexEncode) != 0:
+		var runeBytes [utf8.UTFMax]byte
+		n := utf8.EncodeRune(runeBytes[:], r)
+		*buf = append(*buf, '<')
+		*buf = append(*buf, hex.EncodeToString(runeBytes[:n])...)
+		*buf = append(*buf, '>')
+
+	case (transformMask & TransformJSONEscape) != 0:
+		switch r {
+		case '\n':
+			*buf = append(*buf, '\\', 'n')
+		case '\r':
+			*buf = append(*buf, '\\', 'r')
+		case '\t':
+			*buf = append(*buf, '\\', 't')
+		case '\b':
+			*buf = append(*buf, '\\', 'b')
+		case '\f':
+			*buf = append(*buf, '\\', 'f')
+		case '"':
+			*buf = append(*buf, '\\', '"')
+		case '\\':
+			*buf = append(*buf, '\\', '\\')
+		default:
+			if r < 0x20 || r == 0x7f {
+				*buf = append(*buf, fmt.Sprintf("\\u%04x", r)...)
+			} else {
+				*buf = utf8.AppendRune(*buf, r)
+			}
+		}
+	}
+}
+
+// Serializer implements format-specific output behaviors
+type Serializer struct {
 	format    string
 	sanitizer *Sanitizer
 }
 
-func NewUnifiedHandler(format string, san *Sanitizer) *UnifiedHandler {
-	return &UnifiedHandler{
+// NewSerializer creates a handler with format-specific behavior
+func NewSerializer(format string, san *Sanitizer) *Serializer {
+	return &Serializer{
 		format:    format,
 		sanitizer: san,
 	}
 }
 
-func (h *UnifiedHandler) WriteString(buf *[]byte, s string) {
-	switch h.format {
+// WriteString writes a string with format-specific handling
+func (se *Serializer) WriteString(buf *[]byte, s string) {
+	switch se.format {
 	case "raw":
-		*buf = append(*buf, h.sanitizer.Sanitize(s)...)
+		*buf = append(*buf, se.sanitizer.Sanitize(s)...)
 
 	case "txt":
-		sanitized := h.sanitizer.Sanitize(s)
-		if h.NeedsQuotes(sanitized) {
+		sanitized := se.sanitizer.Sanitize(s)
+		if se.NeedsQuotes(sanitized) {
 			*buf = append(*buf, '"')
-			// Escape quotes within quoted strings
 			for i := 0; i < len(sanitized); i++ {
 				if sanitized[i] == '"' || sanitized[i] == '\\' {
 					*buf = append(*buf, '\\')
@@ -124,12 +207,12 @@ func (h *UnifiedHandler) WriteString(buf *[]byte, s string) {
 
 	case "json":
 		*buf = append(*buf, '"')
-		// Direct JSON escaping without pre-sanitization
+		// Direct JSON escaping
 		for i := 0; i < len(s); {
 			c := s[i]
-			if c >= ' ' && c != '"' && c != '\\' {
+			if c >= ' ' && c != '"' && c != '\\' && c < 0x7f {
 				start := i
-				for i < len(s) && s[i] >= ' ' && s[i] != '"' && s[i] != '\\' {
+				for i < len(s) && s[i] >= ' ' && s[i] != '"' && s[i] != '\\' && s[i] < 0x7f {
 					i++
 				}
 				*buf = append(*buf, s[start:i]...)
@@ -157,27 +240,30 @@ func (h *UnifiedHandler) WriteString(buf *[]byte, s string) {
 	}
 }
 
-func (h *UnifiedHandler) WriteNumber(buf *[]byte, n string) {
+// WriteNumber writes a number value
+func (se *Serializer) WriteNumber(buf *[]byte, n string) {
 	*buf = append(*buf, n...)
 }
 
-func (h *UnifiedHandler) WriteBool(buf *[]byte, b bool) {
+// WriteBool writes a boolean value
+func (se *Serializer) WriteBool(buf *[]byte, b bool) {
 	*buf = strconv.AppendBool(*buf, b)
 }
 
-func (h *UnifiedHandler) WriteNil(buf *[]byte) {
-	switch h.format {
+// WriteNil writes a nil value
+func (se *Serializer) WriteNil(buf *[]byte) {
+	switch se.format {
 	case "raw":
 		*buf = append(*buf, "nil"...)
-	default: // txt, json
+	default:
 		*buf = append(*buf, "null"...)
 	}
 }
 
-func (h *UnifiedHandler) WriteComplex(buf *[]byte, v any) {
-	switch h.format {
+// WriteComplex writes complex types
+func (se *Serializer) WriteComplex(buf *[]byte, v any) {
+	switch se.format {
 	case "raw":
-		// Use spew for complex types in raw mode, DEBUG use
 		var b bytes.Buffer
 		dumper := &spew.ConfigState{
 			Indent:                  " ",
@@ -189,41 +275,37 @@ func (h *UnifiedHandler) WriteComplex(buf *[]byte, v any) {
 		dumper.Fdump(&b, v)
 		*buf = append(*buf, bytes.TrimSpace(b.Bytes())...)
 
-	default: // txt, json
+	default:
 		str := fmt.Sprintf("%+v", v)
-		h.WriteString(buf, str)
+		se.WriteString(buf, str)
 	}
 }
 
-func (h *UnifiedHandler) NeedsQuotes(s string) bool {
-	switch h.format {
+// NeedsQuotes determines if quoting is needed
+func (se *Serializer) NeedsQuotes(s string) bool {
+	switch se.format {
 	case "json":
-		return true // JSON always quotes
+		return true
 	case "txt":
-		// Quote strings that:
-		// 1. Are empty
 		if len(s) == 0 {
 			return true
 		}
 		for _, r := range s {
-			// 2. Contain whitespace (space, tab, newline, etc.)
 			if unicode.IsSpace(r) {
 				return true
 			}
-			// 3. Contain shell special characters (POSIX + common extensions)
 			switch r {
 			case '"', '\'', '\\', '$', '`', '!', '&', '|', ';',
 				'(', ')', '<', '>', '*', '?', '[', ']', '{', '}',
 				'~', '#', '%', '=', '\n', '\r', '\t':
 				return true
 			}
-			// 4. Non-print
 			if !unicode.IsPrint(r) {
 				return true
 			}
 		}
 		return false
-	default: // raw
+	default:
 		return false
 	}
 }

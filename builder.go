@@ -75,8 +75,8 @@ func (b *Builder) Format(format string) *Builder {
 }
 
 // Sanitization sets the sanitization mode
-func (b *Builder) Sanitization(mode sanitizer.Mode) *Builder {
-	b.cfg.Sanitization = mode
+func (b *Builder) Sanitization(policy sanitizer.PolicyPreset) *Builder {
+	b.cfg.Sanitization = policy
 	return b
 }
 

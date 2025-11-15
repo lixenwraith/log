@@ -13,27 +13,30 @@ import (
 
 // Formatter manages the buffered writing and formatting of log entries
 type Formatter struct {
-	format           string
-	buf              []byte
-	timestampFormat  string
-	sanitizationMode sanitizer.Mode
-	sanitizer        *sanitizer.Sanitizer
+	format          string
+	buf             []byte
+	timestampFormat string
+	sanitizer       *sanitizer.Sanitizer
 }
 
 // NewFormatter creates a formatter instance
-func NewFormatter(format string, bufferSize int64, timestampFormat string, sanitizationMode sanitizer.Mode) *Formatter {
+func NewFormatter(format string, bufferSize int64, timestampFormat string, sanitizationPolicy sanitizer.PolicyPreset) *Formatter {
 	if timestampFormat == "" {
 		timestampFormat = time.RFC3339Nano
 	}
 	if format == "" {
 		format = "txt"
 	}
+	if sanitizationPolicy == "" {
+		sanitizationPolicy = "raw"
+	}
+
+	s := (sanitizer.New()).Policy(sanitizationPolicy)
 	return &Formatter{
-		format:           format,
-		buf:              make([]byte, 0, bufferSize),
-		timestampFormat:  timestampFormat,
-		sanitizationMode: sanitizationMode,
-		sanitizer:        sanitizer.New(sanitizationMode),
+		format:          format,
+		buf:             make([]byte, 0, bufferSize),
+		timestampFormat: timestampFormat,
+		sanitizer:       s,
 	}
 }
 
@@ -46,31 +49,45 @@ func (f *Formatter) Reset() {
 func (f *Formatter) Format(format string, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
 	f.Reset()
 
-	// The FlagRaw acts as an override to the configured format
-	effectiveFormat := format
+	// FlagRaw completely bypasses formatting and sanitization
 	if flags&FlagRaw != 0 {
-		effectiveFormat = "raw"
+		for i, arg := range args {
+			if i > 0 {
+				f.buf = append(f.buf, ' ')
+			}
+			// Direct conversion without sanitization
+			switch v := arg.(type) {
+			case string:
+				f.buf = append(f.buf, v...)
+			case []byte:
+				f.buf = append(f.buf, v...)
+			case fmt.Stringer:
+				f.buf = append(f.buf, v.String()...)
+			case error:
+				f.buf = append(f.buf, v.Error()...)
+			default:
+				f.buf = append(f.buf, fmt.Sprint(v)...)
+			}
+		}
+		return f.buf
 	}
 
-	// Create the handler based on the effective format
-	handler := sanitizer.NewUnifiedHandler(effectiveFormat, f.sanitizer)
+	// Create the serializer based on the effective format
+	serializer := sanitizer.NewSerializer(format, f.sanitizer)
 
-	switch effectiveFormat {
+	switch format {
 	case "raw":
-		// This dedicated path handles both format="raw" and FlagRaw
-		// It only serializes the arguments and adds NO metadata or newlines
+		// Raw formatting serializes the arguments and adds NO metadata or newlines
 		for i, arg := range args {
-			f.convertValue(&f.buf, arg, handler, i > 0)
+			f.convertValue(&f.buf, arg, serializer, i > 0)
 		}
 		return f.buf
 
 	case "json":
-		// The existing JSON serialization logic remains unchanged
-		return f.formatJSON(flags, timestamp, level, trace, args, handler)
+		return f.formatJSON(flags, timestamp, level, trace, args, serializer)
 
 	case "txt":
-		// The existing Txt serialization logic is now correctly isolated
-		return f.formatTxt(flags, timestamp, level, trace, args, handler)
+		return f.formatTxt(flags, timestamp, level, trace, args, serializer)
 	}
 
 	return nil // forcing panic on unrecognized format
@@ -79,86 +96,86 @@ func (f *Formatter) Format(format string, flags int64, timestamp time.Time, leve
 // FormatValue formats a single value according to the formatter's configuration
 func (f *Formatter) FormatValue(v any) []byte {
 	f.Reset()
-	handler := sanitizer.NewUnifiedHandler(f.format, f.sanitizer)
-	f.convertValue(&f.buf, v, handler, false)
+	serializer := sanitizer.NewSerializer(f.format, f.sanitizer)
+	f.convertValue(&f.buf, v, serializer, false)
 	return f.buf
 }
 
 // FormatArgs formats multiple arguments as space-separated values
 func (f *Formatter) FormatArgs(args ...any) []byte {
 	f.Reset()
-	handler := sanitizer.NewUnifiedHandler(f.format, f.sanitizer)
+	serializer := sanitizer.NewSerializer(f.format, f.sanitizer)
 	for i, arg := range args {
-		f.convertValue(&f.buf, arg, handler, i > 0)
+		f.convertValue(&f.buf, arg, serializer, i > 0)
 	}
 	return f.buf
 }
 
 // convertValue provides unified type conversion
-func (f *Formatter) convertValue(buf *[]byte, v any, handler *sanitizer.UnifiedHandler, needsSpace bool) {
+func (f *Formatter) convertValue(buf *[]byte, v any, serializer *sanitizer.Serializer, needsSpace bool) {
 	if needsSpace && len(*buf) > 0 {
 		*buf = append(*buf, ' ')
 	}
 
 	switch val := v.(type) {
 	case string:
-		handler.WriteString(buf, val)
+		serializer.WriteString(buf, val)
 
 	case []byte:
-		handler.WriteString(buf, string(val))
+		serializer.WriteString(buf, string(val))
 
 	case rune:
 		var runeStr [utf8.UTFMax]byte
 		n := utf8.EncodeRune(runeStr[:], val)
-		handler.WriteString(buf, string(runeStr[:n]))
+		serializer.WriteString(buf, string(runeStr[:n]))
 
 	case int:
 		num := strconv.AppendInt(nil, int64(val), 10)
-		handler.WriteNumber(buf, string(num))
+		serializer.WriteNumber(buf, string(num))
 
 	case int64:
 		num := strconv.AppendInt(nil, val, 10)
-		handler.WriteNumber(buf, string(num))
+		serializer.WriteNumber(buf, string(num))
 
 	case uint:
 		num := strconv.AppendUint(nil, uint64(val), 10)
-		handler.WriteNumber(buf, string(num))
+		serializer.WriteNumber(buf, string(num))
 
 	case uint64:
 		num := strconv.AppendUint(nil, val, 10)
-		handler.WriteNumber(buf, string(num))
+		serializer.WriteNumber(buf, string(num))
 
 	case float32:
 		num := strconv.AppendFloat(nil, float64(val), 'f', -1, 32)
-		handler.WriteNumber(buf, string(num))
+		serializer.WriteNumber(buf, string(num))
 
 	case float64:
 		num := strconv.AppendFloat(nil, val, 'f', -1, 64)
-		handler.WriteNumber(buf, string(num))
+		serializer.WriteNumber(buf, string(num))
 
 	case bool:
-		handler.WriteBool(buf, val)
+		serializer.WriteBool(buf, val)
 
 	case nil:
-		handler.WriteNil(buf)
+		serializer.WriteNil(buf)
 
 	case time.Time:
 		timeStr := val.Format(f.timestampFormat)
-		handler.WriteString(buf, timeStr)
+		serializer.WriteString(buf, timeStr)
 
 	case error:
-		handler.WriteString(buf, val.Error())
+		serializer.WriteString(buf, val.Error())
 
 	case fmt.Stringer:
-		handler.WriteString(buf, val.String())
+		serializer.WriteString(buf, val.String())
 
 	default:
-		handler.WriteComplex(buf, val)
+		serializer.WriteComplex(buf, val)
 	}
 }
 
 // formatJSON unifies JSON output
-func (f *Formatter) formatJSON(flags int64, timestamp time.Time, level int64, trace string, args []any, handler *sanitizer.UnifiedHandler) []byte {
+func (f *Formatter) formatJSON(flags int64, timestamp time.Time, level int64, trace string, args []any, serializer *sanitizer.Serializer) []byte {
 	f.buf = append(f.buf, '{')
 	needsComma := false
 
@@ -184,7 +201,7 @@ func (f *Formatter) formatJSON(flags int64, timestamp time.Time, level int64, tr
 			f.buf = append(f.buf, ',')
 		}
 		f.buf = append(f.buf, `"trace":`...)
-		handler.WriteString(&f.buf, trace)
+		serializer.WriteString(&f.buf, trace)
 		needsComma = true
 	}
 
@@ -196,7 +213,7 @@ func (f *Formatter) formatJSON(flags int64, timestamp time.Time, level int64, tr
 					f.buf = append(f.buf, ',')
 				}
 				f.buf = append(f.buf, `"message":`...)
-				handler.WriteString(&f.buf, message)
+				serializer.WriteString(&f.buf, message)
 
 				f.buf = append(f.buf, ',')
 				f.buf = append(f.buf, `"fields":`...)
@@ -204,7 +221,7 @@ func (f *Formatter) formatJSON(flags int64, timestamp time.Time, level int64, tr
 				marshaledFields, err := json.Marshal(fields)
 				if err != nil {
 					f.buf = append(f.buf, `{"_marshal_error":"`...)
-					handler.WriteString(&f.buf, err.Error())
+					serializer.WriteString(&f.buf, err.Error())
 					f.buf = append(f.buf, `"}`...)
 				} else {
 					f.buf = append(f.buf, marshaledFields...)
@@ -226,7 +243,7 @@ func (f *Formatter) formatJSON(flags int64, timestamp time.Time, level int64, tr
 			if i > 0 {
 				f.buf = append(f.buf, ',')
 			}
-			f.convertValue(&f.buf, arg, handler, false)
+			f.convertValue(&f.buf, arg, serializer, false)
 		}
 		f.buf = append(f.buf, ']')
 	}
@@ -236,7 +253,7 @@ func (f *Formatter) formatJSON(flags int64, timestamp time.Time, level int64, tr
 }
 
 // formatTxt handles txt format output
-func (f *Formatter) formatTxt(flags int64, timestamp time.Time, level int64, trace string, args []any, handler *sanitizer.UnifiedHandler) []byte {
+func (f *Formatter) formatTxt(flags int64, timestamp time.Time, level int64, trace string, args []any, serializer *sanitizer.Serializer) []byte {
 	needsSpace := false
 
 	if flags&FlagShowTimestamp != 0 {
@@ -256,12 +273,21 @@ func (f *Formatter) formatTxt(flags int64, timestamp time.Time, level int64, tra
 		if needsSpace {
 			f.buf = append(f.buf, ' ')
 		}
-		f.buf = append(f.buf, trace...)
+		// Sanitize trace to prevent terminal control sequence injection
+		traceHandler := sanitizer.NewSerializer("txt", f.sanitizer)
+		tempBuf := make([]byte, 0, len(trace)*2)
+		traceHandler.WriteString(&tempBuf, trace)
+		// Extract content without quotes if added by txt serializer
+		if len(tempBuf) > 2 && tempBuf[0] == '"' && tempBuf[len(tempBuf)-1] == '"' {
+			f.buf = append(f.buf, tempBuf[1:len(tempBuf)-1]...)
+		} else {
+			f.buf = append(f.buf, tempBuf...)
+		}
 		needsSpace = true
 	}
 
 	for _, arg := range args {
-		f.convertValue(&f.buf, arg, handler, needsSpace)
+		f.convertValue(&f.buf, arg, serializer, needsSpace)
 		needsSpace = true
 	}
 

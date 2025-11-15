@@ -10,13 +10,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lixenwraith/log/sanitizer"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // TestFormatter tests the output of the formatter for txt, json, and raw formats
 func TestFormatter(t *testing.T) {
-	f := NewFormatter("txt", 1024, time.RFC3339Nano, 0)
+	f := NewFormatter("txt", 1024, time.RFC3339Nano, sanitizer.PolicyRaw)
 	timestamp := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	t.Run("txt format", func(t *testing.T) {
@@ -30,7 +31,7 @@ func TestFormatter(t *testing.T) {
 		assert.True(t, strings.HasSuffix(str, "\n"))
 	})
 
-	f = NewFormatter("json", 1024, time.RFC3339Nano, 0)
+	f = NewFormatter("json", 1024, time.RFC3339Nano, sanitizer.PolicyRaw)
 	t.Run("json format", func(t *testing.T) {
 		data := f.Format("json", FlagDefault, timestamp, LevelWarn, "trace1", []any{"warning", true})
 
@@ -45,7 +46,7 @@ func TestFormatter(t *testing.T) {
 		assert.Equal(t, true, fields[1])
 	})
 
-	f = NewFormatter("raw", 1024, time.RFC3339Nano, 0)
+	f = NewFormatter("raw", 1024, time.RFC3339Nano, sanitizer.PolicyRaw)
 	t.Run("raw format", func(t *testing.T) {
 		data := f.Format("raw", 0, timestamp, LevelInfo, "", []any{"raw", "data", 42})
 		str := string(data)
@@ -61,7 +62,7 @@ func TestFormatter(t *testing.T) {
 		assert.Equal(t, "forced raw", str)
 	})
 
-	f = NewFormatter("json", 1024, time.RFC3339Nano, 0)
+	f = NewFormatter("json", 1024, time.RFC3339Nano, sanitizer.PolicyJSON)
 	t.Run("structured json", func(t *testing.T) {
 		fields := map[string]any{"key1": "value1", "key2": 42}
 		data := f.Format("json", FlagStructuredJSON|FlagDefault, timestamp, LevelInfo, "",
@@ -75,7 +76,7 @@ func TestFormatter(t *testing.T) {
 		assert.Equal(t, map[string]any{"key1": "value1", "key2": float64(42)}, result["fields"])
 	})
 
-	f = NewFormatter("json", 1024, time.RFC3339Nano, 3)
+	f = NewFormatter("json", 1024, time.RFC3339Nano, sanitizer.PolicyJSON)
 	t.Run("special characters escaping", func(t *testing.T) {
 		data := f.Format("json", FlagDefault, timestamp, LevelInfo, "",
 			[]any{"test\n\r\t\"\\message"})
@@ -121,39 +122,56 @@ func TestControlCharacterWrite(t *testing.T) {
 	logger, tmpDir := createTestLogger(t)
 	defer logger.Shutdown()
 
-	// Test various control characters
+	cfg := logger.GetConfig()
+	cfg.Format = "raw"
+	cfg.ShowTimestamp = false
+	cfg.ShowLevel = false
+	err := logger.ApplyConfig(cfg)
+	require.NoError(t, err)
+
+	// Test various control characters with expected sanitized output
 	testCases := []struct {
-		name  string
-		input string
+		name     string
+		input    string
+		expected string
 	}{
-		{"null bytes", "test\x00data"},
-		{"bell", "alert\x07message"},
-		{"backspace", "back\x08space"},
-		{"form feed", "page\x0Cbreak"},
-		{"vertical tab", "vertical\x0Btab"},
-		{"escape", "escape\x1B[31mcolor"},
-		{"mixed", "\x00\x01\x02test\x1F\x7Fdata"},
+		{"null bytes", "test\x00data", "test<00>data"},
+		{"bell", "alert\x07message", "alert<07>message"},
+		{"backspace", "back\x08space", "back<08>space"},
+		{"form feed", "page\x0Cbreak", "page<0c>break"},
+		{"vertical tab", "vertical\x0Btab", "vertical<0b>tab"},
+		{"escape", "escape\x1B[31mcolor", "escape<1b>[31mcolor"},
+		{"mixed", "\x00\x01\x02test\x1F\x7Fdata", "<00><01><02>test<1f><7f>data"},
 	}
 
 	for _, tc := range testCases {
-		logger.Write(tc.input)
+		logger.Message(tc.input)
 	}
 
 	logger.Flush(time.Second)
 
-	// Verify file contains hex-encoded control chars
 	content, err := os.ReadFile(filepath.Join(tmpDir, "log.log"))
 	require.NoError(t, err)
 
-	// Control chars should be hex-encoded in raw output
-	assert.Contains(t, string(content), "test")
-	assert.Contains(t, string(content), "data")
+	// Verify each test case produced correct sanitized output
+	for _, tc := range testCases {
+		assert.Contains(t, string(content), tc.expected,
+			"Test case '%s' should produce hex-encoded control chars", tc.name)
+	}
 }
 
 // TestRawSanitizedOutput verifies that raw output is correctly sanitized
 func TestRawSanitizedOutput(t *testing.T) {
 	logger, tmpDir := createTestLogger(t)
 	defer logger.Shutdown()
+
+	// Use raw format instead of Write() to test sanitization
+	cfg := logger.GetConfig()
+	cfg.Format = "raw"
+	cfg.ShowTimestamp = false
+	cfg.ShowLevel = false
+	err := logger.ApplyConfig(cfg)
+	require.NoError(t, err)
 
 	// 1. A string with valid multi-byte UTF-8 should be unchanged
 	utf8String := "Hello │ 世界"
@@ -171,7 +189,7 @@ func TestRawSanitizedOutput(t *testing.T) {
 	expectedMultiByteOutput := "line1<c285>line2"
 
 	// Log all cases
-	logger.Write(utf8String, stringWithControl, bytesWithControl, multiByteControl)
+	logger.Message(utf8String, stringWithControl, bytesWithControl, multiByteControl)
 	logger.Flush(time.Second)
 
 	// Read and verify the single line of output

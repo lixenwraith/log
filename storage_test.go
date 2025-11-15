@@ -19,7 +19,7 @@ func TestLogRotation(t *testing.T) {
 	defer logger.Shutdown()
 
 	cfg := logger.GetConfig()
-	cfg.MaxSizeKB = 1000     // 1MB
+	cfg.MaxSizeKB = 100      // 100KB
 	cfg.FlushIntervalMs = 10 // Fast flush for testing
 	logger.ApplyConfig(cfg)
 
@@ -27,11 +27,11 @@ func TestLogRotation(t *testing.T) {
 	// Account for timestamp, level, and other formatting overhead
 	// A typical log line overhead is ~50-100 bytes
 	const overhead = 100
-	const targetMessageSize = 50000 // 50KB per message
+	const targetMessageSize = 5000 // 5KB per message
 	largeData := strings.Repeat("x", targetMessageSize)
 
 	// Write enough to exceed 1MB twice (should cause at least one rotation)
-	messagesNeeded := (2 * sizeMultiplier * 1000) / (targetMessageSize + overhead) // ~40 messages
+	messagesNeeded := int((2 * sizeMultiplier * cfg.MaxSizeKB) / (targetMessageSize + overhead)) // ~40 messages
 
 	for i := 0; i < messagesNeeded; i++ {
 		logger.Info(fmt.Sprintf("msg%d:", i), largeData)

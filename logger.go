@@ -326,8 +326,7 @@ func (l *Logger) LogStructured(level int64, message string, fields map[string]an
 	l.log(l.getFlags()|FlagStructuredJSON, level, 0, []any{message, fields})
 }
 
-// Write outputs raw, unformatted data regardless of configured format
-// Writes args as space-separated strings without a trailing newline
+// Write outputs raw, unformatted data ignoring configured format and sanitization without trailing new line
 func (l *Logger) Write(args ...any) {
 	l.log(FlagRaw, LevelInfo, 0, args...)
 }
