@@ -4,6 +4,8 @@ package log
 import (
 	"os"
 	"time"
+
+	"github.com/lixenwraith/log/formatter"
 )
 
 // processLogs is the main log processing loop running in a separate goroutine
@@ -102,15 +104,23 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 		return 0
 	}
 
-	// Format and serialize the log entry once
-	data := l.formatter.Format(
+	// Atomically load formatter instance
+	formatterPtr := l.formatter.Load()
+	if formatterPtr == nil {
+		// Defensive: Should never happen after initialization
+		return 0
+	}
+	f := formatterPtr.(*formatter.Formatter)
+
+	// Format the log entry using atomically-loaded formatter
+	formattedData := f.Format(
 		record.Flags,
 		record.TimeStamp,
 		record.Level,
 		record.Trace,
 		record.Args,
 	)
-	dataLen := int64(len(data))
+	formattedDataLen := int64(len(formattedData))
 
 	// Write to console if enabled
 	enableConsole := c.EnableConsole
@@ -121,14 +131,14 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 				if c.ConsoleTarget == "split" {
 					if record.Level >= LevelWarn {
 						// Write WARN and ERROR to stderr
-						_, _ = os.Stderr.Write(data)
+						_, _ = os.Stderr.Write(formattedData)
 					} else {
 						// Write INFO and DEBUG to stdout
-						_, _ = sinkWrapper.w.Write(data)
+						_, _ = sinkWrapper.w.Write(formattedData)
 					}
 				} else {
 					// Write to the configured target (stdout or stderr)
-					_, _ = sinkWrapper.w.Write(data)
+					_, _ = sinkWrapper.w.Write(formattedData)
 				}
 			}
 		}
@@ -137,12 +147,12 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 	// Skip file operations if file output is disabled
 	if !enableFile {
 		l.state.TotalLogsProcessed.Add(1)
-		return dataLen // Return data length for adaptive interval calculations
+		return formattedDataLen // Return data length for adaptive interval calculations
 	}
 
 	// File rotation check
 	currentFileSize := l.state.CurrentSize.Load()
-	estimatedSize := currentFileSize + dataLen
+	estimatedSize := currentFileSize + formattedDataLen
 
 	maxSizeKB := c.MaxSizeKB
 	if maxSizeKB > 0 && estimatedSize > maxSizeKB*sizeMultiplier {
@@ -157,7 +167,7 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 	// Write to file
 	cfPtr := l.state.CurrentFile.Load()
 	if currentLogFile, isFile := cfPtr.(*os.File); isFile && currentLogFile != nil {
-		n, err := currentLogFile.Write(data)
+		n, err := currentLogFile.Write(formattedData)
 		if err != nil {
 			l.internalLog("failed to write to log file: %v\n", err)
 			l.state.DroppedLogs.Add(1)

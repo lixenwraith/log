@@ -19,7 +19,7 @@ type Logger struct {
 	currentConfig atomic.Value // stores *Config
 	state         State
 	initMu        sync.Mutex
-	formatter     *formatter.Formatter
+	formatter     atomic.Value // stores *formatter.Formatter
 }
 
 // NewLogger creates a new Logger instance with default settings
@@ -27,7 +27,16 @@ func NewLogger() *Logger {
 	l := &Logger{}
 
 	// Set default configuration
-	l.currentConfig.Store(DefaultConfig())
+	defaultCfg := DefaultConfig()
+	l.currentConfig.Store(defaultCfg)
+
+	// Initialize default formatter to prevent nil access
+	defaultFormatter := formatter.New(sanitizer.New()).
+		Type(defaultCfg.Format).
+		TimestampFormat(defaultCfg.TimestampFormat).
+		ShowLevel(defaultCfg.ShowLevel).
+		ShowTimestamp(defaultCfg.ShowTimestamp)
+	l.formatter.Store(defaultFormatter)
 
 	// Initialize the state
 	l.state.IsInitialized.Store(false)
@@ -347,11 +356,12 @@ func (l *Logger) applyConfig(cfg *Config) error {
 
 	// Create formatter with sanitizer
 	s := sanitizer.New().Policy(cfg.Sanitization)
-	l.formatter = formatter.New(s).
+	newFormatter := formatter.New(s).
 		Type(cfg.Format).
 		TimestampFormat(cfg.TimestampFormat).
 		ShowLevel(cfg.ShowLevel).
 		ShowTimestamp(cfg.ShowTimestamp)
+	l.formatter.Store(newFormatter)
 
 	// Ensure log directory exists if file output is enabled
 	if cfg.EnableFile {
@@ -442,8 +452,8 @@ func (l *Logger) applyConfig(cfg *Config) error {
 	// Mark as initialized
 	l.state.IsInitialized.Store(true)
 	l.state.ShutdownCalled.Store(false)
-	// l.state.DiskFullLogged.Store(false)
-	// l.state.DiskStatusOK.Store(true)
+	l.state.DiskFullLogged.Store(false)
+	l.state.DiskStatusOK.Store(true)
 
 	// Restart processor if it was running and needs restart
 	if needsRestart {

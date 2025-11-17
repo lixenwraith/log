@@ -72,6 +72,7 @@ func TestBuilder_Build(t *testing.T) {
 		invalidDir := filepath.Join("/root", "unwritable-log-test-dir")
 		logger, err := NewBuilder().
 			Directory(invalidDir).
+			EnableFile(true).
 			Build()
 
 		// Assert that ApplyConfig (called by Build) failed

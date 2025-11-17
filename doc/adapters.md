@@ -350,3 +350,285 @@ func requestLogger(adapter *compat.FastHTTPAdapter) fasthttp.RequestHandler {
     }
 }
 ```
+
+### Simple integration example suite
+
+Below simple client and server examples can be used to test the basic functionality of the adapters. They are not included in the package to avoid dependency creep.
+
+
+#### gnet server
+
+
+```go
+package main
+
+import (
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/lixenwraith/log"
+	"github.com/lixenwraith/log/compat"
+	"github.com/panjf2000/gnet/v2"
+)
+
+type echoServer struct {
+	gnet.BuiltinEventEngine
+	adapter *compat.GnetAdapter
+}
+
+func (es *echoServer) OnTraffic(c gnet.Conn) gnet.Action {
+	buf, _ := c.Next(-1)
+	if len(buf) > 0 {
+		es.adapter.Infof("Echo %d bytes", len(buf))
+		c.Write(buf)
+	}
+	return gnet.None
+}
+
+func main() {
+	// Minimal logger config
+	logger, err := log.NewBuilder().
+		Directory("./logs_gnet").
+		Format("json").
+		LevelString("info").
+		HeartbeatLevel(0).
+		Build()
+	if err != nil {
+		panic(err)
+	}
+
+	if err := logger.Start(); err != nil {
+		panic(err)
+	}
+
+	adapter, err := compat.NewBuilder().WithLogger(logger).BuildGnet()
+	if err != nil {
+		panic(err)
+	}
+
+	handler := &echoServer{adapter: adapter}
+
+	fmt.Println("Starting gnet server on :9000")
+	fmt.Println("Press Ctrl+C to stop")
+
+	// Signal handling
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		if err := gnet.Run(handler, "tcp://:9000",
+			gnet.WithLogger(adapter),
+		); err != nil {
+			fmt.Printf("gnet error: %v\n", err)
+			os.Exit(1)
+		}
+	}()
+
+	<-sigChan
+	fmt.Println("\nShutting down...")
+	logger.Shutdown()
+}
+```
+
+#### fasthttp server
+
+
+```go
+package main
+
+import (
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/lixenwraith/log"
+	"github.com/lixenwraith/log/compat"
+	"github.com/valyala/fasthttp"
+)
+
+func main() {
+	// Minimal logger config
+	logger, err := log.NewBuilder().
+		Directory("./logs_fasthttp").
+		Format("json").
+		LevelString("info").
+		HeartbeatLevel(0).
+		Build()
+	if err != nil {
+		panic(err)
+	}
+
+	if err := logger.Start(); err != nil {
+		panic(err)
+	}
+
+	adapter, err := compat.NewBuilder().WithLogger(logger).BuildFastHTTP()
+	if err != nil {
+		panic(err)
+	}
+
+	server := &fasthttp.Server{
+		Handler: func(ctx *fasthttp.RequestCtx) {
+			adapter.Printf("Request: %s %s", ctx.Method(), ctx.Path())
+			ctx.WriteString("OK")
+		},
+		Logger: adapter,
+		Name:   "TestServer",
+	}
+
+	fmt.Println("Starting FastHTTP server on :8080")
+	fmt.Println("Press Ctrl+C to stop")
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		if err := server.ListenAndServe(":8080"); err != nil {
+			fmt.Printf("FastHTTP error: %v\n", err)
+			os.Exit(1)
+		}
+	}()
+
+	<-sigChan
+	fmt.Println("\nShutting down...")
+	server.Shutdown()
+	logger.Shutdown()
+}
+```
+
+#### Fiber server
+
+
+```go
+package main
+
+import (
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/lixenwraith/log"
+	"github.com/lixenwraith/log/compat"
+)
+
+func main() {
+	// Minimal logger config
+	logger, err := log.NewBuilder().
+		Directory("./logs_fiber").
+		Format("json").
+		LevelString("info").
+		HeartbeatLevel(0).
+		Build()
+	if err != nil {
+		panic(err)
+	}
+
+	if err := logger.Start(); err != nil {
+		panic(err)
+	}
+
+	adapter, err := compat.NewBuilder().WithLogger(logger).BuildFiber()
+	if err != nil {
+		panic(err)
+	}
+
+	app := fiber.New(fiber.Config{
+		DisableStartupMessage: true,
+	})
+
+	app.Use(func(c *fiber.Ctx) error {
+		adapter.Infow("Request", "method", c.Method(), "path", c.Path())
+		return c.Next()
+	})
+
+	app.Get("/", func(c *fiber.Ctx) error {
+		return c.SendString("OK")
+	})
+
+	fmt.Println("Starting Fiber server on :3000")
+	fmt.Println("Press Ctrl+C to stop")
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		if err := app.Listen(":3000"); err != nil {
+			fmt.Printf("Fiber error: %v\n", err)
+			os.Exit(1)
+		}
+	}()
+
+	<-sigChan
+	fmt.Println("\nShutting down...")
+	app.ShutdownWithTimeout(2 * time.Second)
+	logger.Shutdown()
+}
+```
+
+#### Client
+
+Client for all adapter servers.
+
+```bash
+# Run with:
+go run client.go -target=gnet
+go run client.go -target=fasthttp
+go run client.go -target=fiber
+```
+
+
+```go
+package main
+
+import (
+	"flag"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+)
+
+var target = flag.String("target", "fiber", "Target: gnet|fasthttp|fiber")
+
+func main() {
+	flag.Parse()
+
+	switch *target {
+	case "gnet":
+		conn, err := net.Dial("tcp", "localhost:9000")
+		if err != nil {
+			panic(err)
+		}
+		conn.Write([]byte("TEST"))
+		buf := make([]byte, 4)
+		conn.Read(buf)
+		conn.Close()
+		fmt.Println("gnet: received echo")
+
+	case "fasthttp":
+		resp, err := http.Get("http://localhost:8080/")
+		if err != nil {
+			panic(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		fmt.Printf("fasthttp: %s\n", body)
+
+	case "fiber":
+		resp, err := http.Get("http://localhost:3000/")
+		if err != nil {
+			panic(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		fmt.Printf("fiber: %s\n", body)
+	}
+}
+```
+

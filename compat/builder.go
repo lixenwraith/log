@@ -98,6 +98,15 @@ func (b *Builder) BuildFastHTTP(opts ...FastHTTPOption) (*FastHTTPAdapter, error
 	return NewFastHTTPAdapter(l, opts...), nil
 }
 
+// BuildFiber creates a Fiber v2.54.x adapter
+func (b *Builder) BuildFiber(opts ...FiberOption) (*FiberAdapter, error) {
+	l, err := b.getLogger()
+	if err != nil {
+		return nil, err
+	}
+	return NewFiberAdapter(l, opts...), nil
+}
+
 // GetLogger returns the underlying *log.Logger instance
 // If a logger has not been provided or created yet, it will be initialized
 func (b *Builder) GetLogger() (*log.Logger, error) {
@@ -106,7 +115,7 @@ func (b *Builder) GetLogger() (*log.Logger, error) {
 
 // --- Example Usage ---
 //
-// The following demonstrates how to integrate lixenwraith/log with gnet and fasthttp
+// The following demonstrates how to integrate lixenwraith/log with gnet, fasthttp, and Fiber
 // using a single, shared logger instance
 //
 //	// 1. Create and configure application's main logger
@@ -127,6 +136,9 @@ func (b *Builder) GetLogger() (*log.Logger, error) {
 //	fasthttpLogger, err := builder.BuildFastHTTP()
 //	if err != nil { /* handle error */ }
 //
+//	fiberLogger, err := builder.BuildFiber()
+//	if err != nil { /* handle error */ }
+//
 //	// 4. Configure your servers with the adapters
 //
 //	// For gnet:
@@ -143,3 +155,15 @@ func (b *Builder) GetLogger() (*log.Logger, error) {
 //		Logger: fasthttpLogger,
 //	}
 //	go server.ListenAndServe(":8080")
+//
+//	// For Fiber v2.54.x:
+//	// The adapter is passed to fiber.New() via the config
+//	app := fiber.New(fiber.Config{
+//		AppName: "My Application",
+//	})
+//	app.UpdateConfig(fiber.Config{
+//		AppName: "My Application",
+//	})
+//	// Note: Set the logger after app creation if needed
+//	// fiber uses internal logging, adapter can be used in custom middleware
+//	go app.Listen(":3000")

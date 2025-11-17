@@ -126,7 +126,7 @@ func logWithContext(ctx context.Context, logger *log.Logger, level string, msg s
 
 ## Output Formats
 
-The logger supports three output formats, each with configurable sanitization. For advanced formatting needs, see [Formatting & Sanitization](formatting.md) for standalone usage of the formatter and sanitizer packages.
+The logger supports three output formats, each with configurable sanitization. The default format is "raw".
 
 ### Txt Format (Human-Readable)
 

@@ -12,7 +12,7 @@ A high-performance, buffered, rotating file logger for Go applications with buil
 - **Automatic file rotation** and disk space management
 - **Operational heartbeats** for production monitoring
 - **Hot reconfiguration** without data loss
-- **Framework adapters** for gnet v2 and fasthttp
+- **Framework adapters** for gnet v2, fasthttp, Fiber v2
 - **Production-grade reliability** with graceful shutdown
 
 ## Quick Start

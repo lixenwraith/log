@@ -19,7 +19,9 @@ Direct struct configuration using the Config struct, or key-value overrides:
 ```go
 logger := log.NewLogger() // logger instance created with DefaultConfig (using default values)
 
-logger.Info("info txt log record written to ./log/log.log")
+// Note: with default config, logs only go to stderr (file output disabled by default)
+logger.Start()  // Required before logging
+logger.Info("info raw log record written to stderr")
 
 // Directly change config struct
 cfg := log.GetConfig()
@@ -51,7 +53,7 @@ logger.Info("info txt log record written to /var/log/myapp.txt")
 | `name` | `string` | Base name for log files | `"log"`    |
 | `extension` | `string` | Log file extension (without dot) | `"log"` |
 | `directory` | `string` | Directory to store log files | `"./log"` |
-| `format` | `string` | Output format: `"txt"`, `"json"`, or `"raw"` | `"txt"` |
+| `format` | `string` | Output format: `"txt"`, `"json"`, or `"raw"` | `"raw"` |
 | `sanitization` | `string` | Sanitization policy: `"raw"`, `"txt"`, `"json"`, or `"shell"` | `"raw"` |
 | `timestamp_format` | `string` | Custom timestamp format (Go time format) | `time.RFC3339Nano` |
 | `internal_errors_to_stderr` | `bool` | Write logger's internal errors to stderr | `false` |
@@ -63,8 +65,8 @@ logger.Info("info txt log record written to /var/log/myapp.txt")
 | `show_timestamp` | `bool` | Include timestamps in log entries                    | `true`     |
 | `show_level`     | `bool` | Include log level in entries                         | `true`     |
 | `enable_console` | `bool` | Enable console output (stdout/stderr)                | `true`     |
-| `console_target` | `string` | Console target: `"stdout"`, `"stderr"`, or `"split"` | `"stdout"` |
-| `enable_file`    | `bool` | Enable file output (console-only)                    | `true`     |
+| `console_target` | `string` | Console target: `"stdout"`, `"stderr"`, or `"split"` | `"stderr"` |
+| `enable_file`    | `bool` | Enable file output (console-only)                    | `false`    |
 
 **Note:** When `console_target="split"`, INFO/DEBUG logs go to stdout while WARN/ERROR logs go to stderr.
 

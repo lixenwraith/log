@@ -33,8 +33,8 @@ func main() {
 	// Create a new logger instance with default configuration
 	logger := log.NewLogger()
 
-	// Apply configuration
-	err := logger.ApplyConfigString("directory=/var/log/myapp")
+	// Apply configuration (enable file output since it's disabled by default)
+	err := logger.ApplyConfigString("directory=/var/log/myapp", "enable_file=true")
 	if err != nil {
 		panic(fmt.Errorf("failed to apply logger config: %w", err))
 	}

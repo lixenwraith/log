@@ -54,6 +54,7 @@ func TestLoggerFormatterIntegration(t *testing.T) {
 			cfg.Format = tt.format
 			cfg.ShowTimestamp = false
 			cfg.ShowLevel = true
+			cfg.EnableFile = true
 			cfg.FlushIntervalMs = 10
 
 			err := logger.ApplyConfig(cfg)
@@ -87,6 +88,7 @@ func TestControlCharacterWriteWithFormatter(t *testing.T) {
 	cfg.Format = "raw"
 	cfg.ShowTimestamp = false
 	cfg.ShowLevel = false
+	cfg.Sanitization = PolicyTxt
 	err := logger.ApplyConfig(cfg)
 	require.NoError(t, err)
 
@@ -110,6 +112,8 @@ func TestControlCharacterWriteWithFormatter(t *testing.T) {
 
 	logger.Flush(time.Second)
 
+	time.Sleep(50 * time.Millisecond) // Small delay for file write
+
 	content, err := os.ReadFile(filepath.Join(tmpDir, "log.log"))
 	require.NoError(t, err)
 
@@ -125,9 +129,10 @@ func TestRawSanitizedOutputWithFormatter(t *testing.T) {
 	defer logger.Shutdown()
 
 	cfg := logger.GetConfig()
-	cfg.Format = "raw"
 	cfg.ShowTimestamp = false
 	cfg.ShowLevel = false
+	cfg.Format = "raw"
+	cfg.Sanitization = PolicyTxt
 	err := logger.ApplyConfig(cfg)
 	require.NoError(t, err)
 

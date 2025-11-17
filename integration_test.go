@@ -24,6 +24,7 @@ func TestFullLifecycle(t *testing.T) {
 		MaxSizeKB(1).
 		BufferSize(1000).
 		EnableConsole(false).
+		EnableFile(true).
 		HeartbeatLevel(1).
 		HeartbeatIntervalS(2).
 		Build()
@@ -129,6 +130,7 @@ func TestErrorRecovery(t *testing.T) {
 		// Use the builder to attempt creation with an invalid directory
 		logger, err := NewBuilder().
 			Directory("/root/cannot_write_here_without_sudo").
+			EnableFile(true).
 			Build()
 
 		assert.Error(t, err, "Should get an error for an invalid directory")

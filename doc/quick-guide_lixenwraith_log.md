@@ -26,7 +26,8 @@ func main() {
         LevelString("info").               // Minimum log level
         Format("json").                    // Output format
         Sanitization("json").              // Sanitization policy
-        BufferSize(2048).                  // Channel buffer size
+        EnableFile(true).                  // Enable file output (disabled by default)
+		BufferSize(2048).                  // Channel buffer size
         MaxSizeMB(10).                     // Max file size before rotation
         HeartbeatLevel(1).                 // Enable operational monitoring
         HeartbeatIntervalS(300).          // Every 5 minutes

@@ -68,6 +68,7 @@ func TestStopReconfigureRestart(t *testing.T) {
 	// Initial config: txt format
 	cfg1 := DefaultConfig()
 	cfg1.Directory = tmpDir
+	cfg1.EnableFile = true
 	cfg1.Format = "txt"
 	cfg1.ShowTimestamp = false
 	err := logger.ApplyConfig(cfg1)

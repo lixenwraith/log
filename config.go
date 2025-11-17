@@ -61,8 +61,8 @@ type Config struct {
 var defaultConfig = Config{
 	// Output settings
 	EnableConsole: true,
-	ConsoleTarget: "stdout",
-	EnableFile:    true,
+	ConsoleTarget: "stderr",
+	EnableFile:    false,
 
 	// File settings
 	Level:     LevelInfo,
@@ -71,11 +71,11 @@ var defaultConfig = Config{
 	Extension: "log",
 
 	// Formatting
-	Format:          "txt",
+	Format:          "raw",
 	ShowTimestamp:   true,
 	ShowLevel:       true,
 	TimestampFormat: time.RFC3339Nano,
-	Sanitization:    PolicyTxt,
+	Sanitization:    PolicyRaw,
 
 	// Buffer and size limits
 	BufferSize:     1024,

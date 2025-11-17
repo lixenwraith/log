@@ -22,6 +22,7 @@ func createTestCompatBuilder(t *testing.T) (*Builder, *log.Logger, string) {
 		Directory(tmpDir).
 		Format("json").
 		LevelString("debug").
+		EnableFile(true).
 		Build()
 	require.NoError(t, err)
 
@@ -224,4 +225,126 @@ func TestFastHTTPAdapter(t *testing.T) {
 		assert.Equal(t, "source", fields[2])
 		assert.Equal(t, "fasthttp", fields[3])
 	}
+}
+
+// TestFiberAdapter tests the Fiber adapter's logging output across all log levels
+func TestFiberAdapter(t *testing.T) {
+	builder, logger, tmpDir := createTestCompatBuilder(t)
+	defer logger.Shutdown()
+
+	var fatalCalled bool
+	var panicCalled bool
+	adapter, err := builder.BuildFiber(
+		WithFiberFatalHandler(func(msg string) {
+			fatalCalled = true
+		}),
+		WithFiberPanicHandler(func(msg string) {
+			panicCalled = true
+		}),
+	)
+	require.NoError(t, err)
+
+	// Test formatted logging (Tracef, Debugf, Infof, Warnf, Errorf, Fatalf, Panicf)
+	adapter.Tracef("fiber trace id=%d", 1)
+	adapter.Debugf("fiber debug id=%d", 2)
+	adapter.Infof("fiber info id=%d", 3)
+	adapter.Warnf("fiber warn id=%d", 4)
+	adapter.Errorf("fiber error id=%d", 5)
+	adapter.Fatalf("fiber fatal id=%d", 6)
+	adapter.Panicf("fiber panic id=%d", 7)
+
+	err = logger.Flush(time.Second)
+	require.NoError(t, err)
+
+	lines := readLogFile(t, tmpDir, 7)
+
+	expected := []struct {
+		level string
+		msg   string
+	}{
+		{"DEBUG", "fiber trace id=1"},
+		{"DEBUG", "fiber debug id=2"},
+		{"INFO", "fiber info id=3"},
+		{"WARN", "fiber warn id=4"},
+		{"ERROR", "fiber error id=5"},
+		{"ERROR", "fiber fatal id=6"},
+		{"ERROR", "fiber panic id=7"},
+	}
+
+	require.Len(t, lines, 7, "Should have 7 fiber log lines")
+
+	for i, line := range lines {
+		var entry map[string]any
+		err := json.Unmarshal([]byte(line), &entry)
+		require.NoError(t, err, "Failed to parse log line: %s", line)
+
+		assert.Equal(t, expected[i].level, entry["level"])
+		fields := entry["fields"].([]any)
+		assert.Equal(t, "msg", fields[0])
+		assert.Equal(t, expected[i].msg, fields[1])
+		assert.Equal(t, "source", fields[2])
+		assert.Equal(t, "fiber", fields[3])
+	}
+	assert.True(t, fatalCalled, "Custom fatal handler should have been called")
+	assert.True(t, panicCalled, "Custom panic handler should have been called")
+}
+
+// TestFiberAdapterStructuredLogging tests Fiber's structured logging (WithLogger methods)
+func TestFiberAdapterStructuredLogging(t *testing.T) {
+	builder, logger, tmpDir := createTestCompatBuilder(t)
+	defer logger.Shutdown()
+
+	adapter, err := builder.BuildFiber()
+	require.NoError(t, err)
+
+	// Test structured logging with key-value pairs
+	adapter.Infow("request served", "status", 200, "client_ip", "127.0.0.1", "method", "GET")
+	adapter.Debugw("query executed", "duration_ms", 42, "query", "SELECT * FROM users")
+
+	err = logger.Flush(time.Second)
+	require.NoError(t, err)
+
+	lines := readLogFile(t, tmpDir, 2)
+	require.Len(t, lines, 2, "Should have 2 fiber structured log lines")
+
+	// Check first structured log (Infow)
+	var entry1 map[string]any
+	err = json.Unmarshal([]byte(lines[0]), &entry1)
+	require.NoError(t, err)
+
+	assert.Equal(t, "INFO", entry1["level"])
+	fields1 := entry1["fields"].([]any)
+	assert.Equal(t, "msg", fields1[0])
+	assert.Equal(t, "request served", fields1[1])
+	assert.Equal(t, "source", fields1[2])
+	assert.Equal(t, "fiber", fields1[3])
+	assert.Equal(t, "status", fields1[4])
+	assert.Equal(t, 200.0, fields1[5]) // JSON numbers are float64
+	assert.Equal(t, "client_ip", fields1[6])
+	assert.Equal(t, "127.0.0.1", fields1[7])
+
+	// Check second structured log (Debugw)
+	var entry2 map[string]any
+	err = json.Unmarshal([]byte(lines[1]), &entry2)
+	require.NoError(t, err)
+
+	assert.Equal(t, "DEBUG", entry2["level"])
+	fields2 := entry2["fields"].([]any)
+	assert.Equal(t, "msg", fields2[0])
+	assert.Equal(t, "query executed", fields2[1])
+	assert.Equal(t, "source", fields2[2])
+	assert.Equal(t, "fiber", fields2[3])
+	assert.Equal(t, "duration_ms", fields2[4])
+	assert.Equal(t, 42.0, fields2[5]) // JSON numbers are float64
+}
+
+// TestFiberBuilderIntegration ensures Fiber adapter can be built from builder
+func TestFiberBuilderIntegration(t *testing.T) {
+	builder, logger, _ := createTestCompatBuilder(t)
+	defer logger.Shutdown()
+
+	fiberAdapter, err := builder.BuildFiber()
+	require.NoError(t, err)
+	assert.NotNil(t, fiberAdapter)
+	assert.Equal(t, logger, fiberAdapter.logger)
 }
