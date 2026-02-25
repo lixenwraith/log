@@ -1,4 +1,3 @@
-// FILE: lixenwraith/log/format_test.go
 // This file tests the integration between log package and formatter package
 package log
 

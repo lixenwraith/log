@@ -1,4 +1,3 @@
-// FILE: utility_test.go
 package log
 
 import (

@@ -1,4 +1,3 @@
-// FILE: lixenwraith/log/compat/structured_gnet.go
 package compat
 
 import (

@@ -1,4 +1,3 @@
-// FILE: lixenwraith/log/benchmark_test.go
 package log
 
 import (

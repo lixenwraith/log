@@ -1,4 +1,3 @@
-// FILE: lixenwraith/log/sanitizer/sanitizer_test.go
 package sanitizer
 
 import (

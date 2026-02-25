@@ -1,4 +1,3 @@
-// FILE: lixenwraith/log/sanitizer/sanitizer.go
 // Package sanitizer provides a fluent and composable interface for sanitizing
 // strings based on configurable rules using bitwise filter flags and transforms.
 package sanitizer

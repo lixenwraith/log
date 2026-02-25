@@ -1,4 +1,3 @@
-// FILE: lixenwraith/log/logger.go
 package log
 
 import (

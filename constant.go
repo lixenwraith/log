@@ -1,4 +1,3 @@
-// FILE: lixenwraith/log/constant.go
 package log
 
 import (

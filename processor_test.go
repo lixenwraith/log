@@ -1,4 +1,3 @@
-// FILE: lixenwraith/log/processor_test.go
 package log
 
 import (

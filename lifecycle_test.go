@@ -1,4 +1,3 @@
-// FILE: lixenwraith/log/lifecycle_test.go
 package log
 
 import (

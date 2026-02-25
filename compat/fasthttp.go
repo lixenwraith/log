@@ -1,4 +1,3 @@
-// FILE: lixenwraith/log/compat/fasthttp.go
 package compat
 
 import (

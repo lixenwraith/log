@@ -1,4 +1,3 @@
-// FILE: lixenwraith/log/builder_test.go
 package log
 
 import (

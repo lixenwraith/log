@@ -1,4 +1,3 @@
-// FILE: lixenwraith/log/compat/builder.go
 package compat
 
 import (

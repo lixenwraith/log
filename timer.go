@@ -1,4 +1,3 @@
-// FILE: lixenwraith/log/timer.go
 package log
 
 import "time"

@@ -1,4 +1,3 @@
-// FILE: lixenwraith/log/heartbeat.go
 package log
 
 import (

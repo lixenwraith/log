@@ -1,4 +1,3 @@
-// FILE: lixenwraith/log/formatter/formatter_test.go
 package formatter
 
 import (
