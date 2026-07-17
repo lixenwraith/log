@@ -250,9 +250,6 @@ func TestLoggerFormats(t *testing.T) {
 			err = logger.Flush(time.Second)
 			require.NoError(t, err)
 
-			// Small delay for flush
-			time.Sleep(50 * time.Millisecond)
-
 			content, err := os.ReadFile(filepath.Join(tmpDir, "log.log"))
 			require.NoError(t, err)
 
@@ -267,11 +264,11 @@ func TestLoggerConcurrency(t *testing.T) {
 	defer logger.Shutdown()
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for j := range 100 {
 				logger.Info("goroutine", i, "log", j)
 			}
 		}(i)
@@ -319,3 +316,4 @@ func TestLoggerWrite(t *testing.T) {
 	assert.Contains(t, string(content), "raw output 123")
 	assert.True(t, strings.HasSuffix(string(content), "raw output 123"))
 }
+

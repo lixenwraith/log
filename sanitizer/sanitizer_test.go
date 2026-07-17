@@ -2,6 +2,7 @@ package sanitizer
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -93,8 +94,8 @@ func TestChaining(t *testing.T) {
 		Rule(FilterWhitespace, TransformStrip).
 		Rule(FilterShellSpecial, TransformHexEncode)
 
-	// Shell special chars are checked first (prepended), get hex encoded
-	// Whitespace rule is second, strips spaces
+	// Rules append in call order; first match wins.
+	// Whitespace rule strips spaces; shell rule hex-encodes ';'.
 	assert.Equal(t, "cmd<3b>echohello", s.Sanitize("cmd; echo hello"))
 }
 
@@ -176,6 +177,20 @@ func TestSerializer(t *testing.T) {
 		assert.Contains(t, string(buf), "map[")
 	})
 
+	t.Run("json utf8 passthrough", func(t *testing.T) {
+		handler := NewSerializer("json", New())
+		var buf []byte
+		handler.WriteString(&buf, "héllo 世界")
+		assert.Equal(t, `"héllo 世界"`, string(buf))
+	})
+
+	t.Run("json sanitizer applied", func(t *testing.T) {
+		handler := NewSerializer("json", New().Policy(PolicyTxt))
+		var buf []byte
+		handler.WriteString(&buf, "a\x00b")
+		assert.Equal(t, `"a<00>b"`, string(buf))
+	})
+
 	t.Run("nil handling", func(t *testing.T) {
 		san := New()
 
@@ -238,3 +253,51 @@ func TestTransformPriority(t *testing.T) {
 	// Should strip (first flag checked), not hex encode
 	assert.Equal(t, "ab", s.Sanitize("a\x00b"))
 }
+
+func TestSanitizerConcurrent(t *testing.T) {
+	s := New().Policy(PolicyTxt)
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 500; j++ {
+				if got := s.Sanitize("a\x00b\x07c"); got != "a<00>b<07>c" {
+					t.Errorf("got %q", got)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestSanitizeCleanFastPath(t *testing.T) {
+	s := New().Policy(PolicyTxt)
+	in := "clean ascii text"
+	assert.Equal(t, in, s.Sanitize(in))
+	assert.Zero(t, testing.AllocsPerRun(100, func() { _ = s.Sanitize(in) }))
+}
+
+func TestAppendSanitize(t *testing.T) {
+	s := New().Policy(PolicyTxt)
+	buf := append([]byte(nil), "prefix:"...)
+	buf = s.AppendSanitize(buf, "a\x00b")
+	assert.Equal(t, "prefix:a<00>b", string(buf))
+}
+
+func TestHexMarkerEscaping(t *testing.T) {
+	s := New().Policy(PolicyTxt)
+	assert.Equal(t, "a<00>b", s.Sanitize("a\x00b"))    // actual NUL
+	assert.Equal(t, "a<3c>00>b", s.Sanitize("a<00>b")) // literal text "<00>" — unambiguous
+}
+
+func TestPolicyShellExtended(t *testing.T) {
+	s := New().Policy(PolicyShell)
+	assert.Equal(t, "abc", s.Sanitize(`a'b"c`))
+	assert.Equal(t, "ab", s.Sanitize(`a\b`))
+	assert.Equal(t, "file", s.Sanitize("file*?"))
+	assert.Equal(t, "rm-rf", s.Sanitize("rm -rf *"))
+	assert.Equal(t, "ab", s.Sanitize("a\x00\x1bb")) // control stripped
+}
+

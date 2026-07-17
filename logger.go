@@ -16,9 +16,9 @@ import (
 // Logger is the core struct that encapsulates all logger functionality
 type Logger struct {
 	currentConfig atomic.Value // stores *Config
+	formatter     atomic.Value // stores *formatter.Formatter
 	state         State
 	initMu        sync.Mutex
-	formatter     atomic.Value // stores *formatter.Formatter
 }
 
 // NewLogger creates a new Logger instance with default settings
@@ -320,17 +320,17 @@ func (l *Logger) ErrorTrace(depth int, args ...any) {
 
 // Log writes a timestamp-only record without level information
 func (l *Logger) Log(args ...any) {
-	l.log(FlagShowTimestamp, LevelInfo, 0, args...)
+	l.log(FlagShowTimestamp|FlagNoLevel, LevelInfo, 0, args...)
 }
 
 // Message writes a plain record without timestamp or level info
 func (l *Logger) Message(args ...any) {
-	l.log(0, LevelInfo, 0, args...)
+	l.log(FlagNoTimestamp|FlagNoLevel, LevelInfo, 0, args...)
 }
 
 // LogTrace writes a timestamp record with call trace but no level info
 func (l *Logger) LogTrace(depth int, args ...any) {
-	l.log(FlagShowTimestamp, LevelInfo, int64(depth), args...)
+	l.log(FlagShowTimestamp|FlagNoLevel, LevelInfo, int64(depth), args...)
 }
 
 // LogStructured logs a message with structured fields as proper JSON
@@ -461,3 +461,4 @@ func (l *Logger) applyConfig(cfg *Config) error {
 
 	return nil
 }
+

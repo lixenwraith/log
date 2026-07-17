@@ -6,11 +6,11 @@ Comprehensive guide to log file rotation, retention policies, and disk space man
 
 ### Automatic Rotation
 
-Log files are automatically rotated when they reach the configured size limit:
+Log files are automatically rotated when they reach the configured size limit in Kilobytes:
 
 ```go
 logger.ApplyConfigString(
-    "max_size_kb=100",  // Rotate at 100MB
+    "max_size_kb=102400",  // Rotate at 100MB (102400 KB)
 )
 ```
 
@@ -62,23 +62,23 @@ When limits are exceeded, the logger:
 ```go
 // Conservative: Strict limits
 logger.ApplyConfigString(
-    "max_size_kb=500",          // 500KB files
-    "max_total_size_kb=5000",   // 5MB total
-    "min_disk_free_kb=1000000",   // 1GB free required
+    "max_size_kb=500",            // 500 KB files
+    "max_total_size_kb=5000",     // 5 MB total log directory limit
+    "min_disk_free_kb=1048576",   // 1 GB free space required on disk
 )
 
 // Generous: Large files, external archival
 logger.ApplyConfigString(
-    "max_size_kb=100000",        // 100MB files
-    "max_total_size_kb=0",     // No total limit
-    "min_disk_free_kb=10000",    // 10MB free required
+    "max_size_kb=102400",         // 100 MB files
+    "max_total_size_kb=0",        // No total limit
+    "min_disk_free_kb=10240",     // 10 MB free required
 )
 
 // Balanced: Production defaults
 logger.ApplyConfigString(
-    "max_size_kb=100000",         // 100MB files
-    "max_total_size_kb=5000000",  // 5GB total
-    "min_disk_free_kb=500000",    // 500MB free required
+    "max_size_kb=102400",         // 100 MB files
+    "max_total_size_kb=5242880",  // 5 GB total limit
+    "min_disk_free_kb=512000",    // 500 MB free required
 )
 ```
 

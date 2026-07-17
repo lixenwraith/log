@@ -151,6 +151,11 @@ func TestDroppedLogRecoveryOnDroppedHeartbeat(t *testing.T) {
 		logger.Info("flood", i)
 	}
 
+	// Drops during flood are nondeterministic (consumer runs concurrently);
+	// capture actual count as the assertion baseline
+	floodDrops := logger.state.TotalDroppedLogs.Load()
+	require.Greater(t, floodDrops, uint64(0), "flood must produce drops")
+
 	// Wait for the first heartbeat to be generated and report ~50 drops
 	time.Sleep(1100 * time.Millisecond)
 
@@ -190,22 +195,28 @@ func TestDroppedLogRecoveryOnDroppedHeartbeat(t *testing.T) {
 	lines := strings.Split(string(content), "\n")
 
 	for _, line := range lines {
-		// Find the last valid heartbeat with drop stats
-		if strings.Contains(line, `"level":"PROC"`) && strings.Contains(line, "dropped_since_last") {
-			foundHeartbeat = true
-			var entry map[string]any
-			err := json.Unmarshal([]byte(line), &entry)
-			require.NoError(t, err, "Failed to parse heartbeat log line: %s", line)
-
-			fields := entry["fields"].([]any)
-			for i := 0; i < len(fields)-1; i += 2 {
-				if key, ok := fields[i].(string); ok {
-					if key == "dropped_since_last" {
-						intervalDropCount, _ = fields[i+1].(float64)
-					}
-					if key == "total_dropped_logs" {
-						totalDropCount, _ = fields[i+1].(float64)
-					}
+		// Track the last PROC heartbeat unconditionally;
+		// an omitted dropped_since_last means 0 drops in that interval
+		if !strings.Contains(line, `"level":"PROC"`) {
+			continue
+		}
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		fields, ok := entry["fields"].([]any)
+		if !ok {
+			continue
+		}
+		foundHeartbeat = true
+		intervalDropCount = 0
+		for i := 0; i < len(fields)-1; i += 2 {
+			if key, ok := fields[i].(string); ok {
+				if key == "dropped_since_last" {
+					intervalDropCount, _ = fields[i+1].(float64)
+				}
+				if key == "total_dropped_logs" {
+					totalDropCount, _ = fields[i+1].(float64)
 				}
 			}
 		}
@@ -217,6 +228,8 @@ func TestDroppedLogRecoveryOnDroppedHeartbeat(t *testing.T) {
 	// Since we disabled internal errors, it should only be the logs explicitly sent
 	assert.LessOrEqual(t, intervalDropCount, float64(10), "Interval drops should be minimal after fixing disk")
 
-	// The 'total_dropped_logs' counter should be accurate, reflecting the initial flood (~50) + the one dropped heartbeat
-	assert.True(t, totalDropCount >= float64(floodCount), "Total drop count should be at least the number of flooded logs plus the dropped heartbeat.")
+	// Compare against observed flood drops, not the flood constant;
+	// TotalDroppedLogs monotonically includes the dropped heartbeat
+	assert.GreaterOrEqual(t, totalDropCount, float64(floodDrops),
+		"Total drop count must cover flood drops plus the dropped heartbeat")
 }

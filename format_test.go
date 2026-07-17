@@ -68,8 +68,6 @@ func TestLoggerFormatterIntegration(t *testing.T) {
 			err = logger.Flush(time.Second)
 			require.NoError(t, err)
 
-			time.Sleep(50 * time.Millisecond)
-
 			content, err := os.ReadFile(filepath.Join(tmpDir, "log.log"))
 			require.NoError(t, err)
 
@@ -159,3 +157,4 @@ func TestRawSanitizedOutputWithFormatter(t *testing.T) {
 
 	assert.Equal(t, expectedOutput, logOutput)
 }
+

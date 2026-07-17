@@ -35,31 +35,40 @@ data := f.Format(
 )
 ```
 
-### Formatter Methods
+### Formatter Methods and Concurrency
 
-#### Format Configuration
-- `Type(format string)` - Set output format: "txt", "json", or "raw"
-- `TimestampFormat(format string)` - Set timestamp format (Go time format)
-- `ShowLevel(show bool)` - Include level in output
-- `ShowTimestamp(show bool)` - Include timestamp in output
+The formatter provides two classes of methods. **You must understand the concurrency contract** when using these standalone:
 
-#### Formatting Methods
-- `Format(flags int64, timestamp time.Time, level int64, trace string, args []any) []byte`
-- `FormatWithOptions(format string, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte`
-- `FormatValue(v any) []byte` - Format a single value
-- `FormatArgs(args ...any) []byte` - Format multiple arguments
+**1. Buffered Methods (Single Goroutine Only)**
+These methods reuse an internal buffer to prevent allocations. **The returned byte slice is valid ONLY until the next buffered call.** You must copy the result (`bytes.Clone()`) before retention or async hand-off.
+* `Format(flags int64, timestamp time.Time, level int64, trace string, args []any) []byte`
+* `FormatWithOptions(format string, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte`
+* `FormatValue(v any) []byte`
+* `FormatArgs(args ...any) []byte`
+
+**2. Append Methods (Thread-Safe)**
+These methods write to a caller-provided destination buffer. Once the formatter is configured, these are **safe for concurrent use** and are preferred for async sinks.
+* `AppendFormat(dst []byte, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte`
+* `AppendFormatWithOptions(dst []byte, format string, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte`
+* `AppendValue(dst []byte, v any) []byte`
+* `AppendArgs(dst []byte, args ...any) []byte`
 
 ### Format Flags
 
+Flags use an additive resolution system. `No*` flags suppress output, `Show*` flags force output, and if neither is specified, the configured default applies. (`No*` flags win on conflicts).
+
 ```go
 const (
-    FlagRaw            int64 = 0b0001  // Bypass formatter and sanitizer
-    FlagShowTimestamp  int64 = 0b0010  // Include timestamp
-    FlagShowLevel      int64 = 0b0100  // Include level
-    FlagStructuredJSON int64 = 0b1000  // Use structured JSON with message/fields
+    FlagRaw            int64 = 0b0001    // Bypass formatter and sanitizer completely
+    FlagShowTimestamp  int64 = 0b0010    // Force include timestamp
+    FlagShowLevel      int64 = 0b0100    // Force include level
+    FlagStructuredJSON int64 = 0b1000    // Use structured JSON with message/fields
+    FlagNoTimestamp    int64 = 0b010000  // Suppress timestamp
+    FlagNoLevel        int64 = 0b100000  // Suppress level
     FlagDefault              = FlagShowTimestamp | FlagShowLevel
 )
 ```
+*Note: `FormatWithOptions` and `AppendFormatWithOptions` bypass configured defaults entirely. Unset `Show*` bits in these methods mean the feature is off.*
 
 ### Level Constants
 
@@ -105,7 +114,7 @@ const (
 - **PolicyRaw**: Pass through all characters unchanged
 - **PolicyTxt**: Hex-encode non-printable characters as `<XX>`
 - **PolicyJSON**: Escape control characters with JSON-style backslashes
-- **PolicyShell**: Strip shell metacharacters and whitespace
+- **PolicyShell**: Strips shell metacharacters (``` ` $ ; | & > < ( ) # ' " \ * ? [ ] { } ~ ! ```), whitespace, and control characters. *Note: Used for defense-in-depth logging, NOT for safely constructing executable shell commands.*
 
 ### Filter Flags
 
@@ -157,6 +166,44 @@ serializer.WriteNumber(&buf, "123.45")        // No quotes for numbers
 serializer.WriteBool(&buf, true)              // "true"
 serializer.WriteNil(&buf)                     // "null"
 ```
+
+## JSON Escaping Layers
+
+The sanitizer is a content transform; JSON string escaping is transport
+encoding applied afterward, unconditionally. Output is valid JSON for any
+sanitization policy. Multi-byte UTF-8 passes through unescaped.
+
+- `format=json` + `sanitization=raw`: recommended; transport escaping only.
+- `format=json` + `sanitization=txt`: non-printables appear as `<XX>` inside
+  JSON strings.
+- `format=json` + `sanitization=json`: redundant; produces visible `\\n`
+  double escapes. Use `raw` instead.
+- Structured JSON (`FlagStructuredJSON`) marshals the fields map via
+  `encoding/json` and bypasses the sanitizer; validity is guaranteed,
+  content-level sanitization is not applied to field values.
+
+## PolicyShell Scope
+
+`PolicyShell` strips metacharacters, whitespace, and control characters as
+defense-in-depth for logged values. It is not sufficient for constructing
+shell commands from untrusted input; pass arguments via exec argv.
+
+## Hex Marker Integrity
+
+`PolicyTxt` hex-encodes literal `<` as `<3c>`. Every `<` in sanitized output
+therefore starts a genuine marker; encoded sequences cannot be spoofed by
+input containing literal `<XX>` text.
+
+## Format Flags
+
+| Flag | Effect |
+|---|---|
+| `FlagShowTimestamp` / `FlagShowLevel` | Force display on |
+| `FlagNoTimestamp` / `FlagNoLevel` | Force display off (wins over Show) |
+| neither | Configured default applies (`Format`/`AppendFormat` only) |
+
+`FormatWithOptions`/`AppendFormatWithOptions` ignore configured defaults:
+unset Show bits mean off. Unknown format strings fall back to `"txt"`.
 
 ## Integration with Logger
 
@@ -227,8 +274,17 @@ scriptLog := txtFormatter.Format(...)
 - Formatter reuses internal buffers via `Reset()`
 - No regex or reflection in hot paths
 
-## Thread Safety
+## Ownership and Thread Safety
 
-- `Formatter` instances are **NOT** thread-safe (use separate instances per goroutine)
-- `Sanitizer` instances **ARE** thread-safe (immutable after creation)
-- For concurrent formatting, create a formatter per goroutine or use sync.Pool
+- Configuration (`Type`, `ShowLevel`, `Rule`, `RuleFunc`, `Policy`, ...) must
+  complete before an instance is shared between goroutines.
+- `Formatter` buffered methods (`Format`, `FormatWithOptions`, `FormatValue`,
+  `FormatArgs`) reuse an internal buffer. The returned slice is valid only
+  until the next buffered call. Copy (`bytes.Clone`) before retaining or
+  handing off to async queues. Single goroutine only.
+- `Formatter` append methods (`AppendFormat`, `AppendFormatWithOptions`,
+  `AppendValue`, `AppendArgs`) write to a caller-provided buffer and are safe
+  for concurrent use. Preferred for async sinks and multi-goroutine callers.
+- `Sanitizer` is immutable after configuration; `Sanitize`/`AppendSanitize`
+  are safe for concurrent use. `Sanitize` returns the input unchanged
+  (allocation-free) when no rule matches.

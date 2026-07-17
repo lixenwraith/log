@@ -53,6 +53,52 @@ func main() {
 }
 ```
 
+## Recommended Usage (Builder Pattern)
+
+The Builder pattern provides a fluent API with compile-time safety and deferred validation, making it the most robust way to initialize your logger:
+
+```go
+package main
+
+import (
+    "fmt"
+    "os"
+    "time"
+    
+    "github.com/lixenwraith/log"
+)
+
+func main() {
+    // Build logger with fluent configuration
+    logger, err := log.NewBuilder().
+        Directory("/var/log/myapp").       // Log directory path
+        LevelString("info").               // Minimum log level
+        Format("json").                    // Output format
+        Sanitization("json").              // Sanitization policy
+        EnableFile(true).                  // Enable file output (disabled by default)
+        BufferSize(2048).                  // Channel buffer size
+        MaxSizeMB(10).                     // Max file size before rotation
+        HeartbeatLevel(1).                 // Enable operational monitoring
+        HeartbeatIntervalS(300).           // Every 5 minutes
+        Build()                            // Build the logger instance
+        
+    if err != nil {
+        panic(fmt.Errorf("logger build failed: %w", err))
+    }
+    
+    // Ensure logs are flushed on shutdown
+    defer logger.Shutdown(5 * time.Second)
+
+    // Start the background async processor (required before logging)
+    if err := logger.Start(); err != nil {
+        panic(fmt.Errorf("logger start failed: %w", err))
+    }
+
+    // Begin logging with structured key-value pairs
+    logger.Info("Application started", "version", "1.0.0", "pid", os.Getpid())
+}
+```
+
 ## Next Steps
 
 1. **[Learn about configuration options](configuration.md)** - Customize behavior for your needs

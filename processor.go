@@ -81,7 +81,8 @@ func (l *Logger) processLogs(ch <-chan logRecord) {
 			}
 
 		case confirmChan := <-l.state.flushRequestChan:
-			l.handleFlushRequest(confirmChan)
+			// Barrier semantics — drain queued records before sync
+			l.handleFlushRequest(ch, confirmChan)
 
 		case <-timers.retentionChan:
 			l.handleRetentionCheck()
@@ -192,10 +193,25 @@ func (l *Logger) handleFlushTick() {
 	}
 }
 
-// handleFlushRequest handles an explicit flush request
-func (l *Logger) handleFlushRequest(confirmChan chan struct{}) {
-	l.performSync()
-	close(confirmChan)
+// handleFlushRequest drains pending records, then syncs. Gives Flush barrier semantics:
+// Records enqueued before the Flush call are processed before confirmation.
+// Channel close is left to the main loop.
+func (l *Logger) handleFlushRequest(ch <-chan logRecord, confirmChan chan struct{}) {
+	for {
+		select {
+		case record, ok := <-ch:
+			if !ok {
+				l.performSync()
+				close(confirmChan)
+				return
+			}
+			l.processLogRecord(record)
+		default:
+			l.performSync()
+			close(confirmChan)
+			return
+		}
+	}
 }
 
 // handleRetentionCheck performs file retention check and cleanup
@@ -265,3 +281,4 @@ func (l *Logger) adjustDiskCheckInterval(timers *TimerSet, lastCheckTime time.Ti
 
 	timers.diskCheckTicker.Reset(newInterval)
 }
+

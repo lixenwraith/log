@@ -267,13 +267,13 @@ if err != nil {
 func (l *Logger) Flush(timeout time.Duration) error
 ```
 
-Explicitly triggers a sync of the current log file buffer to disk.
+Explicitly triggers a sync of the current log file buffer to disk. Uses **barrier semantics**: it guarantees that all log records enqueued *before* the `Flush` call are fully processed and formatted before the disk sync occurs and confirmation is returned.
 
 **Parameters:**
 - `timeout`: Maximum time to wait for flush completion
 
 **Returns:**
-- `error`: Flush error if timeout exceeded
+- `error`: Flush error if timeout exceeded or logger is uninitialized.
 
 **Example:**
 ```go
@@ -331,10 +331,12 @@ level, err := log.Level("debug")  // Returns -4
 
 ```go
 const (
-    FlagRaw            = formatter.FlagRaw            // Bypass formatting
-    FlagShowTimestamp  = formatter.FlagShowTimestamp  // Include timestamp
-    FlagShowLevel      = formatter.FlagShowLevel      // Include level
-    FlagStructuredJSON = formatter.FlagStructuredJSON // Structured JSON
+    FlagRaw            = formatter.FlagRaw            // Bypass formatting and sanitization
+    FlagShowTimestamp  = formatter.FlagShowTimestamp  // Force include timestamp
+    FlagShowLevel      = formatter.FlagShowLevel      // Force include level
+    FlagStructuredJSON = formatter.FlagStructuredJSON // Structured JSON output
+    FlagNoTimestamp    = formatter.FlagNoTimestamp    // Suppress timestamp
+    FlagNoLevel        = formatter.FlagNoLevel        // Suppress level
     FlagDefault        = formatter.FlagDefault        // Default flags
 )
 ```

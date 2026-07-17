@@ -1,5 +1,10 @@
 // Package sanitizer provides a fluent and composable interface for sanitizing
 // strings based on configurable rules using bitwise filter flags and transforms.
+//
+// Concurrency contract: a Sanitizer is immutable after configuration.
+// Configure via Rule/RuleFunc/Policy before sharing; Sanitize and
+// AppendSanitize are then safe for concurrent use. Serializer is stateless
+// and inherits the same contract.
 package sanitizer
 
 import (
@@ -32,24 +37,37 @@ const (
 type PolicyPreset string
 
 const (
-	PolicyRaw   PolicyPreset = "raw"   // Raw is a no-op (passthrough)
-	PolicyJSON  PolicyPreset = "json"  // Policy for sanitizing strings to be embedded in JSON
-	PolicyTxt   PolicyPreset = "txt"   // Policy for sanitizing text written to log files
+	PolicyRaw  PolicyPreset = "raw"  // Raw is a no-op (passthrough)
+	PolicyJSON PolicyPreset = "json" // Policy for sanitizing strings to be embedded in JSON
+	PolicyTxt  PolicyPreset = "txt"  // Policy for sanitizing text written to log files
+	// PolicyShell strips shell metacharacters, whitespace, and control characters. NOT sufficient for safe shell construction. Pass arguments via exec argv instead.
 	PolicyShell PolicyPreset = "shell" // Policy for sanitizing arguments passed to shell commands
 )
 
 // rule represents a single sanitization rule
 type rule struct {
+	fn        func(rune) bool // predicate rules (RuleFunc)
 	filter    uint64
 	transform uint64
 }
 
+func (rl rule) matches(r rune) bool {
+	if rl.fn != nil {
+		return rl.fn(r)
+	}
+	return matchesFilter(r, rl.filter)
+}
+
 // policyRules contains pre-configured rules for each policy
 var policyRules = map[PolicyPreset][]rule{
-	PolicyRaw:   {},
-	PolicyTxt:   {{filter: FilterNonPrintable, transform: TransformHexEncode}},
+	PolicyRaw: {},
+	PolicyTxt: {
+		{fn: func(r rune) bool { return r == '<' }, transform: TransformHexEncode},
+		{filter: FilterNonPrintable, transform: TransformHexEncode},
+	},
+	// PolicyTxt:   {{filter: FilterNonPrintable, transform: TransformHexEncode}},
 	PolicyJSON:  {{filter: FilterControl, transform: TransformJSONEscape}},
-	PolicyShell: {{filter: FilterShellSpecial | FilterWhitespace, transform: TransformStrip}},
+	PolicyShell: {{filter: FilterShellSpecial | FilterWhitespace | FilterControl, transform: TransformStrip}},
 }
 
 // filterCheckers maps individual filter flags to their check functions
@@ -59,7 +77,9 @@ var filterCheckers = map[uint64]func(rune) bool{
 	FilterWhitespace:   unicode.IsSpace,
 	FilterShellSpecial: func(r rune) bool {
 		switch r {
-		case '`', '$', ';', '|', '&', '>', '<', '(', ')', '#':
+		// CHANGED: D2 — added quotes, backslash, glob, braces, '~', '!'
+		case '`', '$', ';', '|', '&', '>', '<', '(', ')', '#',
+			'\'', '"', '\\', '*', '?', '[', ']', '{', '}', '~', '!':
 			return true
 		}
 		return false
@@ -69,14 +89,12 @@ var filterCheckers = map[uint64]func(rune) bool{
 // Sanitizer provides chainable text sanitization
 type Sanitizer struct {
 	rules []rule
-	buf   []byte
 }
 
 // New creates a new Sanitizer instance
 func New() *Sanitizer {
 	return &Sanitizer{
 		rules: []rule{},
-		buf:   make([]byte, 0, 256),
 	}
 }
 
@@ -87,7 +105,13 @@ func (s *Sanitizer) Rule(filter uint64, transform uint64) *Sanitizer {
 	return s
 }
 
-// Policy applies a pre-configured policy to the sanitizer (appended)
+// RuleFunc adds a predicate-based rule (appended, earliest rule applies first)
+func (s *Sanitizer) RuleFunc(fn func(rune) bool, transform uint64) *Sanitizer {
+	s.rules = append(s.rules, rule{fn: fn, transform: transform})
+	return s
+}
+
+// Policy applies a pre-configured policy (appended)
 func (s *Sanitizer) Policy(preset PolicyPreset) *Sanitizer {
 	if rules, ok := policyRules[preset]; ok {
 		s.rules = append(s.rules, rules...)
@@ -95,29 +119,57 @@ func (s *Sanitizer) Policy(preset PolicyPreset) *Sanitizer {
 	return s
 }
 
-// Sanitize applies all configured rules to the input string
+// Sanitize applies all configured rules. Returns the input unchanged (no
+// allocation) when no rule matches. Safe for concurrent use.
 func (s *Sanitizer) Sanitize(data string) string {
-	// Reset buffer
-	s.buf = s.buf[:0]
+	if len(s.rules) == 0 {
+		return data
+	}
+	i := s.firstMatch(data)
+	if i < 0 {
+		return data
+	}
+	buf := make([]byte, 0, len(data)+16)
+	buf = append(buf, data[:i]...)
+	buf = s.appendSanitized(buf, data[i:])
+	return string(buf)
+}
 
-	// Process each rune
+// AppendSanitize appends the sanitized form of data to dst and returns the extended slice. Safe for concurrent use.
+func (s *Sanitizer) AppendSanitize(dst []byte, data string) []byte {
+	if len(s.rules) == 0 {
+		return append(dst, data...)
+	}
+	return s.appendSanitized(dst, data)
+}
+
+// firstMatch returns the byte index of the first rune matching any rule, -1 if none
+func (s *Sanitizer) firstMatch(data string) int {
+	for i, r := range data {
+		for _, rl := range s.rules {
+			if rl.matches(r) {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func (s *Sanitizer) appendSanitized(dst []byte, data string) []byte {
 	for _, r := range data {
 		matched := false
-		// Check rules in order (first match wins)
-		for _, rl := range s.rules {
-			if matchesFilter(r, rl.filter) {
-				applyTransform(&s.buf, r, rl.transform)
+		for _, rl := range s.rules { // first match wins
+			if rl.matches(r) {
+				applyTransform(&dst, r, rl.transform)
 				matched = true
 				break
 			}
 		}
-		// If no rule matched, append original rune
 		if !matched {
-			s.buf = utf8.AppendRune(s.buf, r)
+			dst = utf8.AppendRune(dst, r)
 		}
 	}
-
-	return string(s.buf)
+	return dst
 }
 
 // matchesFilter checks if a rune matches any filter in the mask
@@ -171,8 +223,8 @@ func applyTransform(buf *[]byte, r rune, transformMask uint64) {
 
 // Serializer implements format-specific output behaviors
 type Serializer struct {
-	format    string
 	sanitizer *Sanitizer
+	format    string
 }
 
 // NewSerializer creates a handler with format-specific behavior
@@ -183,7 +235,9 @@ func NewSerializer(format string, san *Sanitizer) *Serializer {
 	}
 }
 
-// WriteString writes a string with format-specific handling
+// WriteString writes a string with format-specific handling.
+// Layering: the sanitizer runs first as a content transform;
+// json transport escaping is always applied last, guaranteeing valid JSON output regardless of policy.
 func (se *Serializer) WriteString(buf *[]byte, s string) {
 	switch se.format {
 	case "raw":
@@ -205,14 +259,21 @@ func (se *Serializer) WriteString(buf *[]byte, s string) {
 		}
 
 	case "json":
+		// Sanitizer applied as content transform before escaping
+		s = se.sanitizer.Sanitize(s)
 		*buf = append(*buf, '"')
-		// Direct JSON escaping
 		for i := 0; i < len(s); {
 			c := s[i]
-			if c >= ' ' && c != '"' && c != '\\' && c < 0x7f {
+			// raw UTF-8 is valid in JSON strings. Only <0x20, '"', '\\', 0x7f are escaped.
+			if c >= 0x20 && c != '"' && c != '\\' && c != 0x7f {
 				start := i
-				for i < len(s) && s[i] >= ' ' && s[i] != '"' && s[i] != '\\' && s[i] < 0x7f {
-					i++
+				for i < len(s) {
+					c = s[i]
+					if c >= 0x20 && c != '"' && c != '\\' && c != 0x7f {
+						i++
+					} else {
+						break
+					}
 				}
 				*buf = append(*buf, s[start:i]...)
 			} else {
@@ -236,6 +297,7 @@ func (se *Serializer) WriteString(buf *[]byte, s string) {
 			}
 		}
 		*buf = append(*buf, '"')
+
 	}
 }
 
@@ -309,3 +371,4 @@ func (se *Serializer) NeedsQuotes(s string) bool {
 		return false
 	}
 }
+
