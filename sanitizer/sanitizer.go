@@ -8,14 +8,11 @@
 package sanitizer
 
 import (
-	"bytes"
 	"encoding/hex"
 	"fmt"
 	"strconv"
 	"unicode"
 	"unicode/utf8"
-
-	"github.com/davecgh/go-spew/spew"
 )
 
 // Filter flags for character matching
@@ -323,24 +320,8 @@ func (se *Serializer) WriteNil(buf *[]byte) {
 
 // WriteComplex writes complex types
 func (se *Serializer) WriteComplex(buf *[]byte, v any) {
-	switch se.format {
-	// For debugging
-	case "raw":
-		var b bytes.Buffer
-		dumper := &spew.ConfigState{
-			Indent:                  " ",
-			MaxDepth:                10,
-			DisablePointerAddresses: true,
-			DisableCapacities:       true,
-			SortKeys:                true,
-		}
-		dumper.Fdump(&b, v)
-		*buf = append(*buf, bytes.TrimSpace(b.Bytes())...)
-
-	default:
-		str := fmt.Sprintf("%+v", v)
-		se.WriteString(buf, str)
-	}
+	str := fmt.Sprintf("%+v", v)
+	se.WriteString(buf, str)
 }
 
 // NeedsQuotes determines if quoting is needed
@@ -371,4 +352,3 @@ func (se *Serializer) NeedsQuotes(s string) bool {
 		return false
 	}
 }
-

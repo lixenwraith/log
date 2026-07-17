@@ -300,4 +300,3 @@ func TestPolicyShellExtended(t *testing.T) {
 	assert.Equal(t, "rm-rf", s.Sanitize("rm -rf *"))
 	assert.Equal(t, "ab", s.Sanitize("a\x00\x1bb")) // control stripped
 }
-
