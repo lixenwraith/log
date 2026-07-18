@@ -1,84 +1,140 @@
 package log
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// TestBuilder_Build tests the full lifecycle of creating a logger using the Builder
-func TestBuilder_Build(t *testing.T) {
-	t.Run("successful build returns configured logger", func(t *testing.T) {
-		// Create a temporary directory for the test
-		tmpDir := t.TempDir()
+// TestBuilderBuild verifies configuration flows from the fluent API into the logger.
+func TestBuilderBuild(t *testing.T) {
+	tmpDir := t.TempDir()
 
-		// Use the builder to create a logger with custom settings
-		logger, err := NewBuilder().
-			Directory(tmpDir).
-			LevelString("debug").
-			Format("json").
-			BufferSize(2048).
-			EnableConsole(true).
-			EnableFile(true).
-			MaxSizeMB(10).
-			HeartbeatLevel(2).
-			Build()
+	logger, err := NewBuilder().
+		Directory(tmpDir).
+		LevelString("debug").
+		Format("json").
+		BufferSize(2048).
+		EnableConsole(false).
+		EnableFile(true).
+		MaxSizeMB(10).
+		HeartbeatLevel(2).
+		Build()
 
-		// Ensure the logger is cleaned up
+	mustNoErr(t, err, "Build")
+	if logger == nil {
+		t.Fatal("Build returned a nil logger without an error")
+	}
+	t.Cleanup(func() { _ = logger.Shutdown() })
+
+	cfg := logger.GetConfig()
+	equal(t, cfg.Directory, tmpDir, "Directory")
+	equal(t, cfg.Level, LevelDebug, "Level")
+	equal(t, cfg.Format, "json", "Format")
+	equal(t, cfg.BufferSize, int64(2048), "BufferSize")
+	isFalse(t, cfg.EnableConsole, "EnableConsole")
+	isTrue(t, cfg.EnableFile, "EnableFile")
+	equal(t, cfg.MaxSizeKB, int64(10*sizeMultiplier), "MaxSizeKB")
+	equal(t, cfg.HeartbeatLevel, int64(2), "HeartbeatLevel")
+
+	// Build applies but does not start the processor
+	isTrue(t, logger.state.IsInitialized.Load(), "IsInitialized")
+	isFalse(t, logger.state.Started.Load(), "Started")
+}
+
+// TestBuilderUnitConversion verifies KB/MB setter pairs share one field.
+func TestBuilderUnitConversion(t *testing.T) {
+	tests := []struct {
+		name string
+		set  func(*Builder) *Builder
+		get  func(*Config) int64
+		want int64
+	}{
+		{"MaxSizeKB", func(b *Builder) *Builder { return b.MaxSizeKB(512) }, func(c *Config) int64 { return c.MaxSizeKB }, 512},
+		{"MaxSizeMB", func(b *Builder) *Builder { return b.MaxSizeMB(2) }, func(c *Config) int64 { return c.MaxSizeKB }, 2 * sizeMultiplier},
+		{"MaxTotalSizeKB", func(b *Builder) *Builder { return b.MaxTotalSizeKB(512) }, func(c *Config) int64 { return c.MaxTotalSizeKB }, 512},
+		{"MaxTotalSizeMB", func(b *Builder) *Builder { return b.MaxTotalSizeMB(3) }, func(c *Config) int64 { return c.MaxTotalSizeKB }, 3 * sizeMultiplier},
+		{"MinDiskFreeKB", func(b *Builder) *Builder { return b.MinDiskFreeKB(64) }, func(c *Config) int64 { return c.MinDiskFreeKB }, 64},
+		{"MinDiskFreeMB", func(b *Builder) *Builder { return b.MinDiskFreeMB(4) }, func(c *Config) int64 { return c.MinDiskFreeKB }, 4 * sizeMultiplier},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := NewBuilder().Directory(t.TempDir()).EnableConsole(false)
+			logger, err := tt.set(b).Build()
+			mustNoErr(t, err, "Build")
+			t.Cleanup(func() { _ = logger.Shutdown() })
+			equal(t, tt.get(logger.GetConfig()), tt.want, tt.name)
+		})
+	}
+}
+
+// TestBuilderErrorAccumulation verifies a deferred error aborts Build.
+func TestBuilderErrorAccumulation(t *testing.T) {
+	logger, err := NewBuilder().
+		LevelString("invalid-level-string").
+		Directory("/some/dir"). // must never be applied
+		Build()
+
+	errContains(t, err, "invalid level string", "Build")
+	if logger != nil {
+		t.Error("Build must return a nil logger on error")
+	}
+
+	// A subsequent setter must not clear the accumulated error
+	logger, err = NewBuilder().
+		LevelString("nonsense").
+		LevelString("info").
+		Build()
+	mustErr(t, err, "Build after error recovery attempt")
+	if logger != nil {
+		t.Error("Build must return a nil logger on error")
+	}
+}
+
+// TestBuilderValidationFailure verifies validation errors surface from ApplyConfig.
+func TestBuilderValidationFailure(t *testing.T) {
+	t.Run("invalid format", func(t *testing.T) {
+		logger, err := NewBuilder().Format("yaml").Build()
+		errContains(t, err, "invalid format", "Build")
 		if logger != nil {
-			defer logger.Shutdown()
+			t.Error("Build must return a nil logger on error")
 		}
-
-		// Check for build errors
-		require.NoError(t, err, "Builder.Build() should not return an error on valid config")
-		require.NotNil(t, logger, "Builder.Build() should return a non-nil logger")
-
-		// Retrieve the configuration from the logger to verify it was applied correctly
-		cfg := logger.GetConfig()
-		require.NotNil(t, cfg, "Logger.GetConfig() should return a non-nil config")
-
-		// Assert that the configuration values match what was set
-		assert.Equal(t, tmpDir, cfg.Directory)
-		assert.Equal(t, LevelDebug, cfg.Level)
-		assert.Equal(t, "json", cfg.Format)
-		assert.Equal(t, int64(2048), cfg.BufferSize)
-		assert.True(t, cfg.EnableConsole, "EnableConsole should be true")
-		assert.Equal(t, int64(10*1000), cfg.MaxSizeKB)
-		assert.Equal(t, int64(2), cfg.HeartbeatLevel)
 	})
 
-	t.Run("builder error accumulation", func(t *testing.T) {
-		// Use an invalid level string to trigger an error within the builder
+	t.Run("unwritable directory", func(t *testing.T) {
+		// Directory mode is not enforced against uid 0
+		if os.Geteuid() == 0 {
+			t.Skip("running as root; directory permissions are not enforced")
+		}
+		parent := t.TempDir()
+		mustNoErr(t, os.Chmod(parent, 0o500), "chmod parent")
+		t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
+
 		logger, err := NewBuilder().
-			LevelString("invalid-level-string").
-			Directory("/some/dir"). // This should not be evaluated
-			Build()
-
-		// Assert that an error is returned and it's the one we expect
-		require.Error(t, err, "Build should fail with an invalid level string")
-		assert.Contains(t, err.Error(), "invalid level string", "Error message should indicate invalid level")
-
-		// Assert that the logger is nil because the build failed
-		assert.Nil(t, logger, "A nil logger should be returned on build error")
-	})
-
-	t.Run("apply config validation error", func(t *testing.T) {
-		// Use a configuration that will fail validation inside ApplyConfig,
-		// e.g., an invalid directory path that cannot be created
-		// Note: on linux /root is not writable by non-root users
-		invalidDir := filepath.Join("/root", "unwritable-log-test-dir")
-		logger, err := NewBuilder().
-			Directory(invalidDir).
+			Directory(filepath.Join(parent, "nested")).
 			EnableFile(true).
 			Build()
 
-		// Assert that ApplyConfig (called by Build) failed
-		require.Error(t, err, "Build should fail with an unwritable directory")
-		assert.Contains(t, err.Error(), "failed to create log directory", "Error message should indicate directory creation failure")
-
-		// Assert that the logger is nil
-		assert.Nil(t, logger, "A nil logger should be returned on apply config error")
+		errContains(t, err, "failed to create log directory", "Build")
+		if logger != nil {
+			t.Error("Build must return a nil logger on error")
+		}
 	})
 }
+
+// TestBuilderDefaults verifies an unconfigured builder yields the package defaults.
+func TestBuilderDefaults(t *testing.T) {
+	logger, err := NewBuilder().EnableConsole(false).Build()
+	mustNoErr(t, err, "Build")
+	t.Cleanup(func() { _ = logger.Shutdown() })
+
+	cfg := logger.GetConfig()
+	def := DefaultConfig()
+	equal(t, cfg.Level, def.Level, "Level")
+	equal(t, cfg.Format, def.Format, "Format")
+	equal(t, cfg.Name, def.Name, "Name")
+	equal(t, cfg.BufferSize, def.BufferSize, "BufferSize")
+	equal(t, cfg.Sanitization, def.Sanitization, "Sanitization")
+}
+

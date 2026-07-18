@@ -335,7 +335,7 @@ func (l *Logger) LogTrace(depth int, args ...any) {
 
 // LogStructured logs a message with structured fields as proper JSON
 func (l *Logger) LogStructured(level int64, message string, fields map[string]any) {
-	l.log(l.getFlags()|FlagStructuredJSON, level, 0, []any{message, fields})
+	l.log(l.getFlags()|FlagStructuredJSON, level, 0, message, fields)
 }
 
 // Write outputs raw, unformatted data ignoring configured format and sanitization without trailing new line
@@ -461,4 +461,3 @@ func (l *Logger) applyConfig(cfg *Config) error {
 
 	return nil
 }
-

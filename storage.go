@@ -152,7 +152,8 @@ func (l *Logger) getDiskFreeSpace(path string) (int64, error) {
 	if err := syscall.Statfs(path, &stat); err != nil {
 		return 0, fmtErrorf("failed to get disk stats for '%s': %w", path, err)
 	}
-	availableBytes := int64(stat.Bavail) * stat.Bsize
+	// Explicit cast to int64 to satisfy both Linux and FreebSD
+	availableBytes := int64(stat.Bavail) * int64(stat.Bsize)
 	return availableBytes, nil
 }
 
@@ -491,3 +492,4 @@ func (l *Logger) getLogFileCount(dir, ext string) (int, error) {
 	}
 	return count, nil
 }
+

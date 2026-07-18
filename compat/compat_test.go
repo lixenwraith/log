@@ -1,107 +1,204 @@
 package compat
 
 import (
-	"bufio"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/lixenwraith/log"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// createTestCompatBuilder creates a standard setup for compatibility adapter tests
-func createTestCompatBuilder(t *testing.T) (*Builder, *log.Logger, string) {
-	t.Helper()
-	tmpDir := t.TempDir()
+func eq[T comparable](tb testing.TB, got, want T, ctx string) {
+	tb.Helper()
+	if got != want {
+		tb.Errorf("%s: got %#v, want %#v", ctx, got, want)
+	}
+}
+
+func mustNoErr(tb testing.TB, err error, ctx string) {
+	tb.Helper()
+	if err != nil {
+		tb.Fatalf("%s: unexpected error: %v", ctx, err)
+	}
+}
+
+func errContains(tb testing.TB, err error, sub, ctx string) {
+	tb.Helper()
+	switch {
+	case err == nil:
+		tb.Errorf("%s: expected error containing %q, got nil", ctx, sub)
+	case !strings.Contains(err.Error(), sub):
+		tb.Errorf("%s: error %q does not contain %q", ctx, err, sub)
+	}
+}
+
+// newTestBuilder returns a builder bound to a started json-format logger.
+func newTestBuilder(tb testing.TB) (*Builder, *log.Logger, string) {
+	tb.Helper()
+	tmpDir := tb.TempDir()
+
 	appLogger, err := log.NewBuilder().
 		Directory(tmpDir).
 		Format("json").
 		LevelString("debug").
+		EnableConsole(false).
 		EnableFile(true).
 		Build()
-	require.NoError(t, err)
+	mustNoErr(tb, err, "Build")
+	mustNoErr(tb, appLogger.Start(), "Start")
+	tb.Cleanup(func() { _ = appLogger.Shutdown() })
 
-	// Start the logger before using it
-	err = appLogger.Start()
-	require.NoError(t, err)
-
-	builder := NewBuilder().WithLogger(appLogger)
-	return builder, appLogger, tmpDir
+	return NewBuilder().WithLogger(appLogger), appLogger, tmpDir
 }
 
-// readLogFile reads a log file, retrying briefly to await async writes
-func readLogFile(t *testing.T, dir string, expectedLines int) []string {
-	t.Helper()
-	var err error
+// readLogLines polls the active log file until it holds at least want records.
+func readLogLines(tb testing.TB, dir string, want int) []string {
+	tb.Helper()
+	path := filepath.Join(dir, "log.log")
+	deadline := time.Now().Add(2 * time.Second)
 
-	// Retry for a short period to handle logging delays
-	for i := 0; i < 20; i++ {
-		var files []os.DirEntry
-		files, err = os.ReadDir(dir)
-		if err == nil && len(files) > 0 {
-			var logFile *os.File
-			logFilePath := filepath.Join(dir, files[0].Name())
-			logFile, err = os.Open(logFilePath)
-			if err == nil {
-				scanner := bufio.NewScanner(logFile)
-				var readLines []string
-				for scanner.Scan() {
-					readLines = append(readLines, scanner.Text())
-				}
-				logFile.Close()
-				if len(readLines) >= expectedLines {
-					return readLines
+	for {
+		if data, err := os.ReadFile(path); err == nil {
+			trimmed := strings.TrimRight(string(data), "\n")
+			if trimmed != "" {
+				lines := strings.Split(trimmed, "\n")
+				if len(lines) >= want {
+					return lines
 				}
 			}
 		}
-		time.Sleep(10 * time.Millisecond)
+		if time.Now().After(deadline) {
+			tb.Fatalf("did not read %d log lines from %s", want, dir)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("Failed to read %d log lines from directory %s. Last error: %v", expectedLines, dir, err)
-	return nil
 }
 
-// TestCompatBuilder verifies the compatibility builder can be initialized correctly
-func TestCompatBuilder(t *testing.T) {
-	t.Run("with existing logger", func(t *testing.T) {
-		builder, logger, _ := createTestCompatBuilder(t)
-		defer logger.Shutdown()
+// recordOf parses one json record into its level and flat fields array.
+func recordOf(tb testing.TB, line string) (string, []any) {
+	tb.Helper()
+	var entry map[string]any
+	if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		tb.Fatalf("parse log line %q: %v", line, err)
+	}
+	level, _ := entry["level"].(string)
+	fields, ok := entry["fields"].([]any)
+	if !ok {
+		tb.Fatalf("record has no fields array: %s", line)
+	}
+	return level, fields
+}
+
+// checkFields compares the leading elements of a fields array.
+func checkFields(tb testing.TB, fields []any, want []any, ctx string) {
+	tb.Helper()
+	if len(fields) < len(want) {
+		tb.Fatalf("%s: got %d fields, want at least %d: %v", ctx, len(fields), len(want), fields)
+	}
+	for i, w := range want {
+		if fields[i] != w {
+			tb.Errorf("%s: field %d = %#v, want %#v", ctx, i, fields[i], w)
+		}
+	}
+}
+
+// TestBuilderSources verifies logger resolution from an instance, a config, or defaults.
+func TestBuilderSources(t *testing.T) {
+	t.Run("existing logger", func(t *testing.T) {
+		builder, logger, _ := newTestBuilder(t)
+
+		adapter, err := builder.BuildGnet()
+		mustNoErr(t, err, "BuildGnet")
+		if adapter == nil {
+			t.Fatal("BuildGnet returned nil")
+		}
+		if adapter.logger != logger {
+			t.Error("adapter must reuse the provided logger")
+		}
+	})
+
+	t.Run("config creates and caches a logger", func(t *testing.T) {
+		cfg := log.DefaultConfig()
+		cfg.Directory = t.TempDir()
+		cfg.EnableConsole = false
+
+		builder := NewBuilder().WithConfig(cfg)
+		adapter, err := builder.BuildFastHTTP()
+		mustNoErr(t, err, "BuildFastHTTP")
+		if adapter == nil {
+			t.Fatal("BuildFastHTTP returned nil")
+		}
+
+		logger, err := builder.GetLogger()
+		mustNoErr(t, err, "GetLogger")
+		t.Cleanup(func() { _ = logger.Shutdown() })
+
+		// Subsequent builds reuse the cached instance
+		second, err := builder.GetLogger()
+		mustNoErr(t, err, "GetLogger second call")
+		if second != logger {
+			t.Error("builder must cache the created logger")
+		}
+		eq(t, logger.GetConfig().Directory, cfg.Directory, "applied directory")
+	})
+
+	t.Run("nil config falls back to defaults", func(t *testing.T) {
+		logger, err := NewBuilder().WithConfig(nil).GetLogger()
+		mustNoErr(t, err, "GetLogger")
+		t.Cleanup(func() { _ = logger.Shutdown() })
+		eq(t, logger.GetConfig().Format, log.DefaultConfig().Format, "default format")
+	})
+
+	t.Run("nil logger is rejected", func(t *testing.T) {
+		builder := NewBuilder().WithLogger(nil)
+		_, err := builder.BuildGnet()
+		errContains(t, err, "provided logger cannot be nil", "BuildGnet")
+
+		// The deferred error persists across build calls
+		_, err = builder.BuildFiber()
+		errContains(t, err, "provided logger cannot be nil", "BuildFiber")
+	})
+
+	t.Run("invalid config propagates", func(t *testing.T) {
+		cfg := log.DefaultConfig()
+		cfg.Directory = t.TempDir()
+		cfg.Format = "yaml"
+
+		_, err := NewBuilder().WithConfig(cfg).BuildGnet()
+		errContains(t, err, "invalid format", "BuildGnet")
+	})
+
+	t.Run("all adapters build from one logger", func(t *testing.T) {
+		builder, logger, _ := newTestBuilder(t)
 
 		gnetAdapter, err := builder.BuildGnet()
-		require.NoError(t, err)
-		assert.NotNil(t, gnetAdapter)
-		assert.Equal(t, logger, gnetAdapter.logger)
-	})
-
-	t.Run("with config", func(t *testing.T) {
-		logCfg := log.DefaultConfig()
-		logCfg.Directory = t.TempDir()
-
-		builder := NewBuilder().WithConfig(logCfg)
+		mustNoErr(t, err, "BuildGnet")
+		structuredAdapter, err := builder.BuildStructuredGnet()
+		mustNoErr(t, err, "BuildStructuredGnet")
 		fasthttpAdapter, err := builder.BuildFastHTTP()
-		require.NoError(t, err)
-		assert.NotNil(t, fasthttpAdapter)
+		mustNoErr(t, err, "BuildFastHTTP")
+		fiberAdapter, err := builder.BuildFiber()
+		mustNoErr(t, err, "BuildFiber")
 
-		logger1, _ := builder.GetLogger()
-		// The builder now creates AND starts the logger internally if needed
-		// We need to defer shutdown to clean up resources
-		defer logger1.Shutdown()
+		if gnetAdapter.logger != logger || structuredAdapter.logger != logger ||
+			fasthttpAdapter.logger != logger || fiberAdapter.logger != logger {
+			t.Error("every adapter must share the provided logger")
+		}
 	})
 }
 
-// TestGnetAdapter tests the gnet adapter's logging output and format
+// TestGnetAdapter verifies level mapping and the fatal handler override.
 func TestGnetAdapter(t *testing.T) {
-	builder, logger, tmpDir := createTestCompatBuilder(t)
-	defer logger.Shutdown()
+	builder, logger, tmpDir := newTestBuilder(t)
 
 	var fatalCalled bool
 	adapter, err := builder.BuildGnet(WithFatalHandler(func(msg string) {
 		fatalCalled = true
 	}))
-	require.NoError(t, err)
+	mustNoErr(t, err, "BuildGnet")
 
 	adapter.Debugf("gnet debug id=%d", 1)
 	adapter.Infof("gnet info id=%d", 2)
@@ -109,12 +206,10 @@ func TestGnetAdapter(t *testing.T) {
 	adapter.Errorf("gnet error id=%d", 4)
 	adapter.Fatalf("gnet fatal id=%d", 5)
 
-	err = logger.Flush(time.Second)
-	require.NoError(t, err)
+	mustNoErr(t, logger.Flush(time.Second), "Flush")
+	lines := readLogLines(t, tmpDir, 5)
+	eq(t, len(lines), 5, "record count")
 
-	lines := readLogFile(t, tmpDir, 5)
-
-	// Define expected log data. The order in the "fields" array is fixed by the adapter call
 	expected := []struct{ level, msg string }{
 		{"DEBUG", "gnet debug id=1"},
 		{"INFO", "gnet info id=2"},
@@ -123,127 +218,146 @@ func TestGnetAdapter(t *testing.T) {
 		{"ERROR", "gnet fatal id=5"},
 	}
 
-	// Filter out the "Logger started" line
-	var logLines []string
-	for _, line := range lines {
-		logLines = append(logLines, line)
+	for i, line := range lines {
+		level, fields := recordOf(t, line)
+		eq(t, level, expected[i].level, "level")
+		checkFields(t, fields, []any{"msg", expected[i].msg, "source", "gnet"}, expected[i].msg)
 	}
-	require.Len(t, logLines, 5, "Should have 5 gnet log lines after filtering")
 
-	for i, line := range logLines {
-		var entry map[string]any
-		err := json.Unmarshal([]byte(line), &entry)
-		require.NoError(t, err, "Failed to parse log line: %s", line)
-
-		assert.Equal(t, expected[i].level, entry["level"])
-
-		// The logger puts all arguments into a "fields" array
-		// The adapter's calls look like: logger.Info("msg", msg, "source", "gnet")
-		fields := entry["fields"].([]any)
-		assert.Equal(t, "msg", fields[0])
-		assert.Equal(t, expected[i].msg, fields[1])
-		assert.Equal(t, "source", fields[2])
-		assert.Equal(t, "gnet", fields[3])
+	// The fatal record carries a marker beyond the common prefix
+	_, fatalFields := recordOf(t, lines[4])
+	checkFields(t, fatalFields, []any{"msg", "gnet fatal id=5", "source", "gnet", "fatal", true}, "fatal marker")
+	if !fatalCalled {
+		t.Error("custom fatal handler was not invoked")
 	}
-	assert.True(t, fatalCalled, "Custom fatal handler should have been called")
 }
 
-// TestStructuredGnetAdapter tests the gnet adapter with structured field extraction
+// TestStructuredGnetAdapter verifies key/value extraction from printf formats.
 func TestStructuredGnetAdapter(t *testing.T) {
-	builder, logger, tmpDir := createTestCompatBuilder(t)
-	defer logger.Shutdown()
+	builder, logger, tmpDir := newTestBuilder(t)
 
 	adapter, err := builder.BuildStructuredGnet()
-	require.NoError(t, err)
+	mustNoErr(t, err, "BuildStructuredGnet")
 
 	adapter.Infof("request served status=%d client_ip=%s", 200, "127.0.0.1")
+	// No key=verb pattern: the whole message collapses into a msg field
+	adapter.Warnf("plain message %d", 42)
 
-	err = logger.Flush(time.Second)
-	require.NoError(t, err)
+	mustNoErr(t, logger.Flush(time.Second), "Flush")
+	lines := readLogLines(t, tmpDir, 2)
+	eq(t, len(lines), 2, "record count")
 
-	lines := readLogFile(t, tmpDir, 1)
+	level, fields := recordOf(t, lines[0])
+	eq(t, level, "INFO", "level")
+	// JSON numbers decode as float64
+	checkFields(t, fields, []any{
+		"msg", "request served",
+		"status", 200.0,
+		"client_ip", "127.0.0.1",
+		"source", "gnet",
+	}, "extracted fields")
 
-	// Find our specific log line
-	require.Len(t, lines, 1, "Should be exactly one log line")
-	logLine := lines[0]
-	require.NotEmpty(t, logLine, "Did not find the structured gnet log line")
-
-	var entry map[string]any
-	err = json.Unmarshal([]byte(logLine), &entry)
-	require.NoError(t, err)
-
-	// The structured adapter parses keys and values, so we check them directly
-	fields := entry["fields"].([]any)
-	assert.Equal(t, "INFO", entry["level"])
-	assert.Equal(t, "msg", fields[0])
-	assert.Equal(t, "request served", fields[1])
-	assert.Equal(t, "status", fields[2])
-	assert.Equal(t, 200.0, fields[3]) // JSON numbers are float64
-	assert.Equal(t, "client_ip", fields[4])
-	assert.Equal(t, "127.0.0.1", fields[5])
-	assert.Equal(t, "source", fields[6])
-	assert.Equal(t, "gnet", fields[7])
+	level, fields = recordOf(t, lines[1])
+	eq(t, level, "WARN", "level")
+	checkFields(t, fields, []any{"msg", "plain message 42", "source", "gnet"}, "fallback")
 }
 
-// TestFastHTTPAdapter tests the fasthttp adapter's logging output and level detection
+// TestFastHTTPAdapter verifies content-based level detection.
 func TestFastHTTPAdapter(t *testing.T) {
-	builder, logger, tmpDir := createTestCompatBuilder(t)
-	defer logger.Shutdown()
+	builder, logger, tmpDir := newTestBuilder(t)
 
 	adapter, err := builder.BuildFastHTTP()
-	require.NoError(t, err)
+	mustNoErr(t, err, "BuildFastHTTP")
 
-	testMessages := []string{
+	messages := []string{
 		"this is some informational message",
 		"a debug message for the developers",
 		"warning: something might be wrong",
 		"an error occurred while processing",
 	}
-	for _, msg := range testMessages {
+	for _, msg := range messages {
 		adapter.Printf("%s", msg)
 	}
 
-	err = logger.Flush(time.Second)
-	require.NoError(t, err)
+	mustNoErr(t, logger.Flush(time.Second), "Flush")
+	lines := readLogLines(t, tmpDir, len(messages))
+	eq(t, len(lines), len(messages), "record count")
 
-	// Expect 4 test messages
-	lines := readLogFile(t, tmpDir, 4)
-	expectedLevels := []string{"INFO", "DEBUG", "WARN", "ERROR"}
-
-	require.Len(t, lines, 4, "Should have 4 fasthttp log lines")
-
+	levels := []string{"INFO", "DEBUG", "WARN", "ERROR"}
 	for i, line := range lines {
-		var entry map[string]any
-		err := json.Unmarshal([]byte(line), &entry)
-		require.NoError(t, err, "Failed to parse log line: %s", line)
-
-		assert.Equal(t, expectedLevels[i], entry["level"])
-		fields := entry["fields"].([]any)
-		assert.Equal(t, "msg", fields[0])
-		assert.Equal(t, testMessages[i], fields[1])
-		assert.Equal(t, "source", fields[2])
-		assert.Equal(t, "fasthttp", fields[3])
+		level, fields := recordOf(t, line)
+		eq(t, level, levels[i], "detected level")
+		checkFields(t, fields, []any{"msg", messages[i], "source", "fasthttp"}, messages[i])
 	}
 }
 
-// TestFiberAdapter tests the Fiber adapter's logging output across all log levels
-func TestFiberAdapter(t *testing.T) {
-	builder, logger, tmpDir := createTestCompatBuilder(t)
-	defer logger.Shutdown()
+// TestDetectLogLevel covers the keyword table directly.
+func TestDetectLogLevel(t *testing.T) {
+	tests := []struct {
+		msg  string
+		want int64
+	}{
+		{"connection failed", log.LevelError},
+		{"FATAL condition", log.LevelError},
+		{"panic recovered", log.LevelError},
+		{"Error: bad input", log.LevelError},
+		{"deprecated call site", log.LevelWarn},
+		{"WARNING: retrying", log.LevelWarn},
+		{"trace enabled", log.LevelDebug},
+		{"debug output", log.LevelDebug},
+		{"server started", log.LevelInfo},
+		{"", log.LevelInfo},
+		// Error keywords are matched before warning keywords
+		{"warning: request failed", log.LevelError},
+	}
 
-	var fatalCalled bool
-	var panicCalled bool
-	adapter, err := builder.BuildFiber(
-		WithFiberFatalHandler(func(msg string) {
-			fatalCalled = true
-		}),
-		WithFiberPanicHandler(func(msg string) {
-			panicCalled = true
+	for _, tt := range tests {
+		if got := DetectLogLevel(tt.msg); got != tt.want {
+			t.Errorf("DetectLogLevel(%q) = %d, want %d", tt.msg, got, tt.want)
+		}
+	}
+}
+
+// TestFastHTTPOptions verifies the default level and detector overrides.
+// Note: LevelInfo is zero, which the adapter treats as "not detected", so a
+// detector cannot force Info over a non-Info default.
+func TestFastHTTPDefaultLevel(t *testing.T) {
+	builder, logger, tmpDir := newTestBuilder(t)
+
+	adapter, err := builder.BuildFastHTTP(
+		WithDefaultLevel(log.LevelWarn),
+		WithLevelDetector(func(msg string) int64 {
+			if strings.Contains(msg, "boom") {
+				return log.LevelError
+			}
+			return log.LevelInfo // indistinguishable from "no detection"
 		}),
 	)
-	require.NoError(t, err)
+	mustNoErr(t, err, "BuildFastHTTP")
 
-	// Test formatted logging (Tracef, Debugf, Infof, Warnf, Errorf, Fatalf, Panicf)
+	adapter.Printf("undetected message")
+	adapter.Printf("boom happened")
+
+	mustNoErr(t, logger.Flush(time.Second), "Flush")
+	lines := readLogLines(t, tmpDir, 2)
+
+	level, _ := recordOf(t, lines[0])
+	eq(t, level, "WARN", "default level applies when detection yields Info")
+	level, _ = recordOf(t, lines[1])
+	eq(t, level, "ERROR", "detector overrides the default")
+}
+
+// TestFiberAdapter verifies the FormatLogger surface and both handler overrides.
+func TestFiberAdapter(t *testing.T) {
+	builder, logger, tmpDir := newTestBuilder(t)
+
+	var fatalCalled, panicCalled bool
+	adapter, err := builder.BuildFiber(
+		WithFiberFatalHandler(func(msg string) { fatalCalled = true }),
+		WithFiberPanicHandler(func(msg string) { panicCalled = true }),
+	)
+	mustNoErr(t, err, "BuildFiber")
+
 	adapter.Tracef("fiber trace id=%d", 1)
 	adapter.Debugf("fiber debug id=%d", 2)
 	adapter.Infof("fiber info id=%d", 3)
@@ -252,15 +366,11 @@ func TestFiberAdapter(t *testing.T) {
 	adapter.Fatalf("fiber fatal id=%d", 6)
 	adapter.Panicf("fiber panic id=%d", 7)
 
-	err = logger.Flush(time.Second)
-	require.NoError(t, err)
+	mustNoErr(t, logger.Flush(time.Second), "Flush")
+	lines := readLogLines(t, tmpDir, 7)
+	eq(t, len(lines), 7, "record count")
 
-	lines := readLogFile(t, tmpDir, 7)
-
-	expected := []struct {
-		level string
-		msg   string
-	}{
+	expected := []struct{ level, msg string }{
 		{"DEBUG", "fiber trace id=1"},
 		{"DEBUG", "fiber debug id=2"},
 		{"INFO", "fiber info id=3"},
@@ -270,80 +380,125 @@ func TestFiberAdapter(t *testing.T) {
 		{"ERROR", "fiber panic id=7"},
 	}
 
-	require.Len(t, lines, 7, "Should have 7 fiber log lines")
-
 	for i, line := range lines {
-		var entry map[string]any
-		err := json.Unmarshal([]byte(line), &entry)
-		require.NoError(t, err, "Failed to parse log line: %s", line)
-
-		assert.Equal(t, expected[i].level, entry["level"])
-		fields := entry["fields"].([]any)
-		assert.Equal(t, "msg", fields[0])
-		assert.Equal(t, expected[i].msg, fields[1])
-		assert.Equal(t, "source", fields[2])
-		assert.Equal(t, "fiber", fields[3])
+		level, fields := recordOf(t, line)
+		eq(t, level, expected[i].level, "level")
+		checkFields(t, fields, []any{"msg", expected[i].msg, "source", "fiber"}, expected[i].msg)
 	}
-	assert.True(t, fatalCalled, "Custom fatal handler should have been called")
-	assert.True(t, panicCalled, "Custom panic handler should have been called")
+
+	// Trace maps onto debug and is distinguished by an extra field
+	_, traceFields := recordOf(t, lines[0])
+	checkFields(t, traceFields, []any{"msg", "fiber trace id=1", "source", "fiber", "level", "trace"}, "trace marker")
+
+	if !fatalCalled {
+		t.Error("custom fatal handler was not invoked")
+	}
+	if !panicCalled {
+		t.Error("custom panic handler was not invoked")
+	}
 }
 
-// TestFiberAdapterStructuredLogging tests Fiber's structured logging (WithLogger methods)
-func TestFiberAdapterStructuredLogging(t *testing.T) {
-	builder, logger, tmpDir := createTestCompatBuilder(t)
-	defer logger.Shutdown()
+// TestFiberAdapterPlain verifies the Logger surface built from fmt.Sprint.
+func TestFiberAdapterPlain(t *testing.T) {
+	builder, logger, tmpDir := newTestBuilder(t)
 
 	adapter, err := builder.BuildFiber()
-	require.NoError(t, err)
+	mustNoErr(t, err, "BuildFiber")
 
-	// Test structured logging with key-value pairs
+	adapter.Info("plain ", "info")
+	adapter.Error("plain ", "error")
+
+	mustNoErr(t, logger.Flush(time.Second), "Flush")
+	lines := readLogLines(t, tmpDir, 2)
+
+	level, fields := recordOf(t, lines[0])
+	eq(t, level, "INFO", "level")
+	checkFields(t, fields, []any{"msg", "plain info", "source", "fiber"}, "Info")
+
+	level, fields = recordOf(t, lines[1])
+	eq(t, level, "ERROR", "level")
+	checkFields(t, fields, []any{"msg", "plain error", "source", "fiber"}, "Error")
+}
+
+// TestFiberAdapterStructured verifies the WithLogger surface.
+func TestFiberAdapterStructured(t *testing.T) {
+	builder, logger, tmpDir := newTestBuilder(t)
+
+	adapter, err := builder.BuildFiber()
+	mustNoErr(t, err, "BuildFiber")
+
 	adapter.Infow("request served", "status", 200, "client_ip", "127.0.0.1", "method", "GET")
-	adapter.Debugw("query executed", "duration_ms", 42, "query", "SELECT * FROM users")
+	adapter.Debugw("query executed", "duration_ms", 42, "query", "SELECT")
+	adapter.Warnw("slow response", "duration_ms", 900)
 
-	err = logger.Flush(time.Second)
-	require.NoError(t, err)
+	mustNoErr(t, logger.Flush(time.Second), "Flush")
+	lines := readLogLines(t, tmpDir, 3)
+	eq(t, len(lines), 3, "record count")
 
-	lines := readLogFile(t, tmpDir, 2)
-	require.Len(t, lines, 2, "Should have 2 fiber structured log lines")
+	// Adapter-owned fields precede caller-supplied pairs
+	level, fields := recordOf(t, lines[0])
+	eq(t, level, "INFO", "level")
+	checkFields(t, fields, []any{
+		"msg", "request served", "source", "fiber",
+		"status", 200.0, "client_ip", "127.0.0.1", "method", "GET",
+	}, "Infow")
 
-	// Check first structured log (Infow)
-	var entry1 map[string]any
-	err = json.Unmarshal([]byte(lines[0]), &entry1)
-	require.NoError(t, err)
+	level, fields = recordOf(t, lines[1])
+	eq(t, level, "DEBUG", "level")
+	checkFields(t, fields, []any{
+		"msg", "query executed", "source", "fiber",
+		"duration_ms", 42.0, "query", "SELECT",
+	}, "Debugw")
 
-	assert.Equal(t, "INFO", entry1["level"])
-	fields1 := entry1["fields"].([]any)
-	assert.Equal(t, "msg", fields1[0])
-	assert.Equal(t, "request served", fields1[1])
-	assert.Equal(t, "source", fields1[2])
-	assert.Equal(t, "fiber", fields1[3])
-	assert.Equal(t, "status", fields1[4])
-	assert.Equal(t, 200.0, fields1[5]) // JSON numbers are float64
-	assert.Equal(t, "client_ip", fields1[6])
-	assert.Equal(t, "127.0.0.1", fields1[7])
-
-	// Check second structured log (Debugw)
-	var entry2 map[string]any
-	err = json.Unmarshal([]byte(lines[1]), &entry2)
-	require.NoError(t, err)
-
-	assert.Equal(t, "DEBUG", entry2["level"])
-	fields2 := entry2["fields"].([]any)
-	assert.Equal(t, "msg", fields2[0])
-	assert.Equal(t, "query executed", fields2[1])
-	assert.Equal(t, "source", fields2[2])
-	assert.Equal(t, "fiber", fields2[3])
-	assert.Equal(t, "duration_ms", fields2[4])
-	assert.Equal(t, 42.0, fields2[5]) // JSON numbers are float64
+	level, fields = recordOf(t, lines[2])
+	eq(t, level, "WARN", "level")
+	checkFields(t, fields, []any{
+		"msg", "slow response", "source", "fiber", "duration_ms", 900.0,
+	}, "Warnw")
 }
 
-// TestFiberBuilderIntegration ensures Fiber adapter can be built from builder
-func TestFiberBuilderIntegration(t *testing.T) {
-	builder, logger, _ := createTestCompatBuilder(t)
-	defer logger.Shutdown()
+// TestFiberAdapterStructuredFatal verifies Fatalw ordering and handler dispatch.
+func TestFiberAdapterStructuredFatal(t *testing.T) {
+	builder, logger, tmpDir := newTestBuilder(t)
 
-	fiberAdapter, err := builder.BuildFiber()
-	require.NoError(t, err)
-	assert.NotNil(t, fiberAdapter)
-	assert.Equal(t, logger, fiberAdapter.logger)
+	var fatalCalled bool
+	adapter, err := builder.BuildFiber(
+		WithFiberFatalHandler(func(msg string) { fatalCalled = true }),
+	)
+	mustNoErr(t, err, "BuildFiber")
+
+	adapter.Fatalw("shutting down", "code", 3)
+
+	mustNoErr(t, logger.Flush(time.Second), "Flush")
+	lines := readLogLines(t, tmpDir, 1)
+
+	level, fields := recordOf(t, lines[0])
+	eq(t, level, "ERROR", "level")
+	checkFields(t, fields, []any{
+		"msg", "shutting down", "source", "fiber", "fatal", true, "code", 3.0,
+	}, "Fatalw")
+	if !fatalCalled {
+		t.Error("custom fatal handler was not invoked")
+	}
 }
+
+// TestFiberAdapterWriter verifies the io.Writer implementation.
+func TestFiberAdapterWriter(t *testing.T) {
+	builder, logger, tmpDir := newTestBuilder(t)
+
+	adapter, err := builder.BuildFiber()
+	mustNoErr(t, err, "BuildFiber")
+
+	payload := []byte("writer output\n")
+	n, err := adapter.Write(payload)
+	mustNoErr(t, err, "Write")
+	eq(t, n, len(payload), "byte count includes the trimmed newline")
+
+	mustNoErr(t, logger.Flush(time.Second), "Flush")
+	lines := readLogLines(t, tmpDir, 1)
+
+	level, fields := recordOf(t, lines[0])
+	eq(t, level, "INFO", "level")
+	checkFields(t, fields, []any{"msg", "writer output", "source", "fiber"}, "Write")
+}
+

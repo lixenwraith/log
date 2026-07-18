@@ -3,19 +3,18 @@ package log
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// TestFullLifecycle performs an end-to-end test of creating, configuring, and using the logger
+// TestFullLifecycle exercises builder construction, every log entry point,
+// runtime reconfiguration, and heartbeat emission end to end.
 func TestFullLifecycle(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create logger with builder using the new streamlined interface
 	logger, err := NewBuilder().
 		Directory(tmpDir).
 		LevelString("debug").
@@ -24,153 +23,143 @@ func TestFullLifecycle(t *testing.T) {
 		BufferSize(1000).
 		EnableConsole(false).
 		EnableFile(true).
-		HeartbeatLevel(1).
-		HeartbeatIntervalS(2).
+		HeartbeatLevel(3).
+		HeartbeatIntervalS(1).
 		Build()
 
-	require.NoError(t, err, "Logger creation with builder should succeed")
-	require.NotNil(t, logger)
+	mustNoErr(t, err, "Build")
+	if logger == nil {
+		t.Fatal("Build returned a nil logger without an error")
+	}
+	mustNoErr(t, logger.Start(), "Start")
+	t.Cleanup(func() { noErr(t, logger.Shutdown(2*time.Second), "Shutdown") })
 
-	// Start the logger before use
-	err = logger.Start()
-	require.NoError(t, err)
-
-	// Defer shutdown right after successful creation
-	defer func() {
-		err := logger.Shutdown(2 * time.Second)
-		assert.NoError(t, err, "Logger shutdown should be clean")
-	}()
-
-	// Log at various levels
 	logger.Debug("debug message")
 	logger.Info("info message")
 	logger.Warn("warning message")
 	logger.Error("error message")
 
-	// Structured logging
 	logger.LogStructured(LevelInfo, "structured log", map[string]any{
 		"user_id": 123,
 		"action":  "login",
 		"success": true,
 	})
 
-	// Raw write
 	logger.Write("raw data write")
-
-	// Trace logging
 	logger.InfoTrace(2, "trace info")
 
-	// Apply runtime override
-	err = logger.ApplyConfigString("enable_console=true", "console_target=stderr")
-	require.NoError(t, err)
-
-	// More logging after reconfiguration
+	mustNoErr(t, logger.ApplyConfigString("console_target=stderr", "trace_depth=1"), "ApplyConfigString")
 	logger.Info("after reconfiguration")
 
-	// Wait for heartbeat
-	time.Sleep(2500 * time.Millisecond)
+	// MaxSizeKB=1 forces rotation, so assertions span every file in the directory
+	mustEventually(t, 3*time.Second, "proc heartbeat emitted", func() bool {
+		return strings.Contains(readAllLogs(t, tmpDir), `"type","proc"`)
+	})
+	mustNoErr(t, logger.Flush(time.Second), "Flush")
 
-	// Flush and check
-	err = logger.Flush(time.Second)
-	assert.NoError(t, err)
+	content := readAllLogs(t, tmpDir)
+	contains(t, content, `"level":"DEBUG"`, "debug level record")
+	contains(t, content, `"message":"structured log"`, "structured message key")
+	contains(t, content, `"user_id":123`, "structured field")
+	contains(t, content, "raw data write", "raw write")
+	contains(t, content, "after reconfiguration", "post-reconfiguration record")
+	contains(t, content, `"type","disk"`, "disk heartbeat")
+	contains(t, content, `"type","sys"`, "sys heartbeat")
 
-	// Verify log content
 	files, err := os.ReadDir(tmpDir)
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(files), 1, "At least one log file should be created")
+	mustNoErr(t, err, "ReadDir")
+	if len(files) < 1 {
+		t.Error("no log files created")
+	}
 }
 
-// TestConcurrentOperations tests the logger's stability under concurrent logging and reconfigurations
+// TestConcurrentOperations verifies stability under simultaneous logging,
+// reconfiguration, and flushing.
 func TestConcurrentOperations(t *testing.T) {
-	logger, _ := createTestLogger(t)
-	defer logger.Shutdown()
+	logger, _ := newTestLogger(t)
 
 	var wg sync.WaitGroup
 
-	// Concurrent logging
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < 20; j++ {
+			for j := range 20 {
 				logger.Info("worker", id, "log", j)
 			}
 		}(i)
 	}
 
-	// Concurrent configuration changes
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 3; i++ {
-			err := logger.ApplyConfigString(fmt.Sprintf("trace_depth=%d", i))
-			assert.NoError(t, err)
+		for i := range 3 {
+			// Non-fatal only: Fatal outside the test goroutine is undefined behavior
+			noErr(t, logger.ApplyConfigString(fmt.Sprintf("trace_depth=%d", i)), "ApplyConfigString")
 			time.Sleep(50 * time.Millisecond)
 		}
 	}()
 
-	// Concurrent flushes
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 5; i++ {
-			err := logger.Flush(100 * time.Millisecond)
-			assert.NoError(t, err)
+		for range 5 {
+			// Timeout must exceed worst-case contention on flushMutex under load
+			noErr(t, logger.Flush(2*time.Second), "concurrent Flush")
 			time.Sleep(30 * time.Millisecond)
 		}
 	}()
 
 	wg.Wait()
+	noErr(t, logger.Flush(2*time.Second), "final Flush")
 }
 
-// TestErrorRecovery tests the logger's behavior in failure scenarios
+// TestErrorRecovery covers construction and runtime failure paths.
 func TestErrorRecovery(t *testing.T) {
-	t.Run("invalid directory", func(t *testing.T) {
-		// Use the builder to attempt creation with an invalid directory
+	t.Run("unwritable directory", func(t *testing.T) {
+		// Directory mode is not enforced against uid 0
+		if os.Geteuid() == 0 {
+			t.Skip("running as root; directory permissions are not enforced")
+		}
+		parent := t.TempDir()
+		mustNoErr(t, os.Chmod(parent, 0o500), "chmod parent")
+		t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
+
 		logger, err := NewBuilder().
-			Directory("/root/cannot_write_here_without_sudo").
+			Directory(filepath.Join(parent, "nested")).
 			EnableFile(true).
 			Build()
 
-		assert.Error(t, err, "Should get an error for an invalid directory")
-		assert.Nil(t, logger, "Logger should be nil on creation failure")
+		errContains(t, err, "failed to create log directory", "Build")
+		if logger != nil {
+			t.Error("Build must return a nil logger on failure")
+		}
 	})
 
-	t.Run("disk full simulation", func(t *testing.T) {
-		logger, _ := createTestLogger(t)
-		defer logger.Shutdown()
+	t.Run("disk full", func(t *testing.T) {
+		logger, _ := newTestLogger(t)
 
 		cfg := logger.GetConfig()
-		cfg.MinDiskFreeKB = 9999999999 // A very large number to simulate a full disk
-		err := logger.ApplyConfig(cfg)
-		require.NoError(t, err)
+		cfg.MinDiskFreeKB = 1 << 40 // unsatisfiable free-space requirement
+		mustNoErr(t, logger.ApplyConfig(cfg), "ApplyConfig")
 
-		// Small delay to ensure the processor has time to react if needed
-		time.Sleep(100 * time.Millisecond)
-
-		// Should detect disk space issue during the check
-		isOK := logger.performDiskCheck(true)
-		assert.False(t, isOK, "Disk check should fail when min free space is not met")
-		assert.False(t, logger.state.DiskStatusOK.Load(), "DiskStatusOK state should be false")
-
-		// Small delay to ensure the processor has time to react if needed
-		time.Sleep(100 * time.Millisecond)
+		isFalse(t, logger.performDiskCheck(true), "performDiskCheck under simulated disk full")
+		isFalse(t, logger.state.DiskStatusOK.Load(), "DiskStatusOK")
 
 		preDropped := logger.state.DroppedLogs.Load()
 		logger.Info("this log entry should be dropped")
 
-		var postDropped uint64
-		var success bool
-		// Poll for up to 500ms for the async processor to update the state
-		for i := 0; i < 50; i++ {
-			postDropped = logger.state.DroppedLogs.Load()
-			if postDropped > preDropped {
-				success = true
-				break
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
+		// The processor drops asynchronously after dequeuing
+		mustEventually(t, time.Second, "drop counter incremented", func() bool {
+			return logger.state.DroppedLogs.Load() > preDropped
+		})
 
-		require.True(t, success, "Dropped log count should have increased after logging with disk full")
+		// Recovery: restoring the threshold must clear the failure state
+		cfg = logger.GetConfig()
+		cfg.MinDiskFreeKB = 0
+		mustNoErr(t, logger.ApplyConfig(cfg), "ApplyConfig recovery")
+		isTrue(t, logger.performDiskCheck(true), "performDiskCheck after recovery")
+		isTrue(t, logger.state.DiskStatusOK.Load(), "DiskStatusOK after recovery")
 	})
 }
+

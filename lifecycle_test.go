@@ -1,176 +1,168 @@
 package log
 
 import (
-	"os"
-	"path/filepath"
+	"strings"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// TestStartStopLifecycle verifies the logger can be started, stopped, and restarted
+// TestStartStopLifecycle verifies stop/restart transitions and processor liveness.
 func TestStartStopLifecycle(t *testing.T) {
-	logger, _ := createTestLogger(t) // Starts the logger by default
+	logger, _ := newTestLogger(t)
 
-	assert.True(t, logger.state.Started.Load(), "Logger should be in a started state")
+	isTrue(t, logger.state.Started.Load(), "Started after setup")
+	isFalse(t, logger.state.ProcessorExited.Load(), "processor must be running")
 
-	// Stop the logger
-	err := logger.Stop()
-	require.NoError(t, err)
-	assert.False(t, logger.state.Started.Load(), "Logger should be in a stopped state after Stop()")
+	mustNoErr(t, logger.Stop(), "Stop")
+	isFalse(t, logger.state.Started.Load(), "Started after Stop")
+	isTrue(t, logger.state.ProcessorExited.Load(), "Stop must join the processor")
 
-	// Start it again
-	err = logger.Start()
-	require.NoError(t, err)
-	assert.True(t, logger.state.Started.Load(), "Logger should be in a started state after restart")
-
-	logger.Shutdown()
+	mustNoErr(t, logger.Start(), "restart")
+	isTrue(t, logger.state.Started.Load(), "Started after restart")
+	isFalse(t, logger.state.ProcessorExited.Load(), "processor must be running after restart")
 }
 
-// TestStartAlreadyStarted verifies that starting an already started logger is a safe no-op
-func TestStartAlreadyStarted(t *testing.T) {
-	logger, _ := createTestLogger(t)
-	defer logger.Shutdown()
+// TestStartStopIdempotence verifies repeated Start/Stop calls are no-ops.
+func TestStartStopIdempotence(t *testing.T) {
+	t.Run("start already started", func(t *testing.T) {
+		logger, _ := newTestLogger(t)
+		noErr(t, logger.Start(), "redundant Start")
+		isTrue(t, logger.state.Started.Load(), "Started")
+	})
 
-	assert.True(t, logger.state.Started.Load())
-
-	// Calling Start() on an already started logger should be a no-op and return no error
-	err := logger.Start()
-	assert.NoError(t, err)
-	assert.True(t, logger.state.Started.Load())
+	t.Run("stop already stopped", func(t *testing.T) {
+		logger, _ := newTestLogger(t)
+		mustNoErr(t, logger.Stop(), "first Stop")
+		noErr(t, logger.Stop(), "redundant Stop")
+		isFalse(t, logger.state.Started.Load(), "Started")
+	})
 }
 
-// TestStopAlreadyStopped verifies that stopping an already stopped logger is a safe no-op
-func TestStopAlreadyStopped(t *testing.T) {
-	logger, _ := createTestLogger(t)
-
-	// Stop it once
-	err := logger.Stop()
-	require.NoError(t, err)
-	assert.False(t, logger.state.Started.Load())
-
-	// Calling Stop() on an already stopped logger should be a no-op and return no error
-	err = logger.Stop()
-	assert.NoError(t, err)
-	assert.False(t, logger.state.Started.Load())
-
-	logger.Shutdown()
-}
-
-// TestStopReconfigureRestart tests reconfiguring a logger while it is stopped
+// TestStopReconfigureRestart verifies a format change applied while stopped
+// takes effect on restart, appending to the same file.
 func TestStopReconfigureRestart(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := NewLogger()
 
-	// Initial config: txt format
-	cfg1 := DefaultConfig()
-	cfg1.Directory = tmpDir
-	cfg1.EnableFile = true
-	cfg1.Format = "txt"
-	cfg1.ShowTimestamp = false
-	err := logger.ApplyConfig(cfg1)
-	require.NoError(t, err)
+	cfg := DefaultConfig()
+	cfg.Directory = tmpDir
+	cfg.EnableConsole = false
+	cfg.EnableFile = true
+	cfg.Format = "txt"
+	cfg.ShowTimestamp = false
+	cfg.FlushIntervalMs = 10
+	mustNoErr(t, logger.ApplyConfig(cfg), "ApplyConfig txt")
+	mustNoErr(t, logger.Start(), "Start")
 
-	// Start and log
-	err = logger.Start()
-	require.NoError(t, err)
 	logger.Info("first message")
-	logger.Flush(time.Second)
+	mustNoErr(t, logger.Flush(time.Second), "Flush")
+	mustNoErr(t, logger.Stop(), "Stop")
 
-	// Stop the logger
-	err = logger.Stop()
-	require.NoError(t, err)
-
-	// Reconfigure: json format
 	cfg2 := logger.GetConfig()
 	cfg2.Format = "json"
-	err = logger.ApplyConfig(cfg2)
-	require.NoError(t, err)
+	mustNoErr(t, logger.ApplyConfig(cfg2), "ApplyConfig json")
+	mustNoErr(t, logger.Start(), "restart")
 
-	// Restart and log
-	err = logger.Start()
-	require.NoError(t, err)
 	logger.Info("second message")
-	logger.Shutdown(time.Second)
+	mustNoErr(t, logger.Shutdown(time.Second), "Shutdown")
 
-	// Verify content
-	content, err := os.ReadFile(filepath.Join(tmpDir, "log.log"))
-	require.NoError(t, err)
-	strContent := string(content)
-
-	// assert.Contains(t, strContent, "INFO first message", "Should contain the log from the first configuration")
-	assert.Contains(t, strContent, `INFO "first message"`, "Should contain the log from the first configuration")
-	assert.Contains(t, strContent, `"fields":["second message"]`, "Should contain the log from the second (JSON) configuration")
+	content := readLog(t, tmpDir)
+	contains(t, content, `INFO "first message"`, "record from txt configuration")
+	contains(t, content, `"fields":["second message"]`, "record from json configuration")
 }
 
-// TestLoggingOnStoppedLogger ensures that log entries are dropped when the logger is stopped
+// TestLoggingOnStoppedLogger verifies records submitted while stopped are discarded.
 func TestLoggingOnStoppedLogger(t *testing.T) {
-	logger, tmpDir := createTestLogger(t)
+	logger, tmpDir := newTestLogger(t)
 
-	// Log something while running
 	logger.Info("this should be logged")
-	logger.Flush(time.Second)
+	mustNoErr(t, logger.Flush(time.Second), "Flush")
+	mustNoErr(t, logger.Stop(), "Stop")
 
-	// Stop the logger
-	err := logger.Stop()
-	require.NoError(t, err)
-
-	// Attempt to log while stopped
 	logger.Warn("this should NOT be logged")
+	mustNoErr(t, logger.Shutdown(time.Second), "Shutdown")
 
-	// Shutdown (which flushes)
-	logger.Shutdown(time.Second)
-
-	content, err := os.ReadFile(filepath.Join(tmpDir, "log.log"))
-	require.NoError(t, err)
-
-	assert.Contains(t, string(content), "this should be logged")
-	assert.NotContains(t, string(content), "this should NOT be logged")
+	content := readLog(t, tmpDir)
+	contains(t, content, "this should be logged", "pre-stop record")
+	notContains(t, content, "this should NOT be logged", "post-stop record")
 }
 
-// TestFlushOnStoppedLogger verifies that Flush returns an error on a stopped logger
-func TestFlushOnStoppedLogger(t *testing.T) {
-	logger, _ := createTestLogger(t)
+// TestShutdownTerminalState verifies Shutdown is terminal and non-restartable.
+func TestShutdownTerminalState(t *testing.T) {
+	logger, _ := newTestLogger(t)
 
-	// Stop the logger
-	err := logger.Stop()
-	require.NoError(t, err)
+	isTrue(t, logger.state.IsInitialized.Load(), "IsInitialized before shutdown")
+	logger.Info("pre-shutdown record")
+	mustNoErr(t, logger.Shutdown(2*time.Second), "Shutdown")
 
-	// Flush should return an error
-	err = logger.Flush(time.Second)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "logger not started")
+	isTrue(t, logger.state.ShutdownCalled.Load(), "ShutdownCalled")
+	isTrue(t, logger.state.LoggerDisabled.Load(), "LoggerDisabled")
+	isFalse(t, logger.state.IsInitialized.Load(), "Shutdown must de-initialize")
+	isFalse(t, logger.state.Started.Load(), "Shutdown must stop")
 
-	logger.Shutdown()
-}
-
-// TestShutdownLifecycle checks the terminal state of the logger after shutdown
-func TestShutdownLifecycle(t *testing.T) {
-	logger, _ := createTestLogger(t)
-
-	assert.True(t, logger.state.Started.Load())
-	assert.True(t, logger.state.IsInitialized.Load())
-
-	// Shutdown is a terminal state
-	err := logger.Shutdown()
-	require.NoError(t, err)
-
-	assert.True(t, logger.state.ShutdownCalled.Load())
-	assert.False(t, logger.state.IsInitialized.Load(), "Shutdown should de-initialize the logger")
-	assert.False(t, logger.state.Started.Load(), "Shutdown should stop the logger")
-
-	// Attempting to start again should fail because it's no longer initialized
-	err = logger.Start()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "logger not initialized")
-
-	// Logging should be a silent no-op
+	// Restart is impossible without a fresh ApplyConfig
+	errContains(t, logger.Start(), "logger not initialized", "Start after Shutdown")
+	// Logging degrades to a silent no-op rather than panicking
 	logger.Info("this will not be logged")
-
-	// Flush should fail
-	err = logger.Flush(time.Second)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not initialized")
+	errContains(t, logger.Flush(time.Second), "not initialized", "Flush after Shutdown")
 }
+
+// TestShutdownEdgeCases covers uninitialized, repeated, and timed-out shutdowns.
+func TestShutdownEdgeCases(t *testing.T) {
+	t.Run("before init", func(t *testing.T) {
+		logger := NewLogger()
+		noErr(t, logger.Shutdown(), "Shutdown on uninitialized logger")
+		// State must be left reusable: ApplyConfig may still follow
+		isFalse(t, logger.state.ShutdownCalled.Load(), "ShutdownCalled must be rolled back")
+		isFalse(t, logger.state.LoggerDisabled.Load(), "LoggerDisabled must be rolled back")
+	})
+
+	t.Run("double shutdown", func(t *testing.T) {
+		logger, _ := newTestLogger(t)
+		noErr(t, logger.Shutdown(), "first Shutdown")
+		noErr(t, logger.Shutdown(), "second Shutdown")
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		logger, _ := newTestLogger(t)
+		for i := range 200 {
+			logger.Info("flood", i)
+		}
+		// Stop may time out; terminal state transitions are unconditional
+		_ = logger.Shutdown(time.Millisecond)
+		isTrue(t, logger.state.ShutdownCalled.Load(), "ShutdownCalled")
+		isFalse(t, logger.state.IsInitialized.Load(), "IsInitialized")
+	})
+}
+
+// TestFlush covers the success path and both failure modes.
+func TestFlush(t *testing.T) {
+	t.Run("successful", func(t *testing.T) {
+		logger, tmpDir := newTestLogger(t)
+
+		logger.Info("flush test")
+		mustNoErr(t, logger.Flush(time.Second), "Flush")
+
+		mustEventually(t, time.Second, "record written", func() bool {
+			return strings.Contains(readLog(t, tmpDir), "flush test")
+		})
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		logger, _ := newTestLogger(t)
+		errContains(t, logger.Flush(time.Nanosecond), "timeout", "Flush")
+	})
+
+	t.Run("on stopped logger", func(t *testing.T) {
+		logger, _ := newTestLogger(t)
+		mustNoErr(t, logger.Stop(), "Stop")
+		errContains(t, logger.Flush(time.Second), "logger not started", "Flush")
+	})
+
+	t.Run("after shutdown", func(t *testing.T) {
+		logger, _ := newTestLogger(t)
+		mustNoErr(t, logger.Shutdown(), "Shutdown")
+		errContains(t, logger.Flush(time.Second), "not initialized", "Flush")
+	})
+}
+

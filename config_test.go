@@ -1,104 +1,93 @@
 package log
 
 import (
-	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// TestDefaultConfig verifies that the default configuration is created with expected values
+// TestDefaultConfig verifies default values and copy independence.
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	assert.NotNil(t, cfg)
-	assert.Equal(t, LevelInfo, cfg.Level)
-	assert.Equal(t, "log", cfg.Name)
-	assert.Equal(t, "log", cfg.Extension)
-	assert.Equal(t, "./log", cfg.Directory)
-	assert.Equal(t, "raw", cfg.Format)
-	assert.Equal(t, PolicyRaw, cfg.Sanitization)
-	assert.True(t, cfg.ShowTimestamp)
-	assert.True(t, cfg.ShowLevel)
-	assert.Equal(t, time.RFC3339Nano, cfg.TimestampFormat)
-	assert.Equal(t, int64(1024), cfg.BufferSize)
+	equal(t, cfg.Level, LevelInfo, "Level")
+	equal(t, cfg.Name, "log", "Name")
+	equal(t, cfg.Extension, "log", "Extension")
+	equal(t, cfg.Directory, "./log", "Directory")
+	equal(t, cfg.Format, "raw", "Format")
+	equal(t, cfg.Sanitization, PolicyRaw, "Sanitization")
+	equal(t, cfg.ConsoleTarget, "stderr", "ConsoleTarget")
+	equal(t, cfg.TimestampFormat, time.RFC3339Nano, "TimestampFormat")
+	equal(t, cfg.BufferSize, int64(1024), "BufferSize")
+	isTrue(t, cfg.ShowTimestamp, "ShowTimestamp")
+	isTrue(t, cfg.ShowLevel, "ShowLevel")
+	isTrue(t, cfg.EnableConsole, "EnableConsole")
+	isFalse(t, cfg.EnableFile, "EnableFile")
+
+	noErr(t, cfg.Validate(), "default config must validate")
+
+	// Each call must yield an independent copy of the package-level default
+	other := DefaultConfig()
+	if cfg == other {
+		t.Error("DefaultConfig returned a shared pointer")
+	}
+	cfg.Level = LevelError
+	equal(t, other.Level, LevelInfo, "second copy must be unaffected")
 }
 
-// TestConfigClone verifies that cloning a config creates a deep copy
+// TestConfigClone verifies full-value copy and bidirectional independence.
 func TestConfigClone(t *testing.T) {
-	cfg1 := DefaultConfig()
-	cfg1.Level = LevelDebug
-	cfg1.Directory = "/custom/path"
+	src := DefaultConfig()
+	src.Level = LevelDebug
+	src.Directory = "/custom/path"
+	src.RetentionPeriodHrs = 12.5
 
-	cfg2 := cfg1.Clone()
+	dst := src.Clone()
+	mustEqual(t, *dst, *src, "clone must equal source")
 
-	// Verify deep copy
-	assert.Equal(t, cfg1.Level, cfg2.Level)
-	assert.Equal(t, cfg1.Directory, cfg2.Directory)
+	src.Level = LevelError
+	equal(t, dst.Level, LevelDebug, "clone unaffected by source mutation")
 
-	// Modify original
-	cfg1.Level = LevelError
-
-	// Verify clone unchanged
-	assert.Equal(t, LevelDebug, cfg2.Level)
+	dst.Name = "renamed"
+	equal(t, src.Name, "log", "source unaffected by clone mutation")
 }
 
-// TestConfigValidate checks various invalid configuration scenarios to ensure they produce errors
+// TestConfigValidate covers each validation branch.
 func TestConfigValidate(t *testing.T) {
 	tests := []struct {
 		name      string
 		modify    func(*Config)
 		wantError string
 	}{
+		{"valid config", func(c *Config) {}, ""},
+		{"empty name", func(c *Config) { c.Name = "" }, "log name cannot be empty"},
+		{"whitespace name", func(c *Config) { c.Name = "   " }, "log name cannot be empty"},
+		{"invalid format", func(c *Config) { c.Format = "invalid" }, "invalid format"},
+		{"invalid sanitization", func(c *Config) { c.Sanitization = "bogus" }, "invalid sanitization policy"},
+		{"extension with dot", func(c *Config) { c.Extension = ".log" }, "extension should not start with dot"},
+		{"empty timestamp format", func(c *Config) { c.TimestampFormat = " " }, "timestamp_format cannot be empty"},
+		{"invalid console target", func(c *Config) { c.ConsoleTarget = "invalid" }, "invalid console_target"},
+		{"zero buffer size", func(c *Config) { c.BufferSize = 0 }, "buffer_size must be positive"},
+		{"negative buffer size", func(c *Config) { c.BufferSize = -1 }, "buffer_size must be positive"},
+		{"negative max size", func(c *Config) { c.MaxSizeKB = -1 }, "size limits cannot be negative"},
+		{"negative total size", func(c *Config) { c.MaxTotalSizeKB = -1 }, "size limits cannot be negative"},
+		{"negative min disk free", func(c *Config) { c.MinDiskFreeKB = -1 }, "size limits cannot be negative"},
+		{"zero flush interval", func(c *Config) { c.FlushIntervalMs = 0 }, "interval settings must be positive"},
+		{"zero disk check interval", func(c *Config) { c.DiskCheckIntervalMs = 0 }, "interval settings must be positive"},
+		{"negative trace depth", func(c *Config) { c.TraceDepth = -1 }, "trace_depth must be between 0 and 10"},
+		{"excessive trace depth", func(c *Config) { c.TraceDepth = 11 }, "trace_depth must be between 0 and 10"},
+		{"boundary trace depth", func(c *Config) { c.TraceDepth = 10 }, ""},
+		{"negative retention", func(c *Config) { c.RetentionPeriodHrs = -1 }, "retention settings cannot be negative"},
+		{"invalid heartbeat level", func(c *Config) { c.HeartbeatLevel = 4 }, "heartbeat_level must be between 0 and 3"},
 		{
-			name:      "valid config",
-			modify:    func(c *Config) {},
-			wantError: "",
+			name:      "heartbeat enabled without interval",
+			modify:    func(c *Config) { c.HeartbeatLevel = 1; c.HeartbeatIntervalS = 0 },
+			wantError: "heartbeat_interval_s must be positive",
 		},
 		{
-			name:      "empty name",
-			modify:    func(c *Config) { c.Name = "" },
-			wantError: "log name cannot be empty",
-		},
-		{
-			name:      "invalid format",
-			modify:    func(c *Config) { c.Format = "invalid" },
-			wantError: "invalid format",
-		},
-		{
-			name:      "extension with dot",
-			modify:    func(c *Config) { c.Extension = ".log" },
-			wantError: "extension should not start with dot",
-		},
-		{
-			name:      "negative buffer size",
-			modify:    func(c *Config) { c.BufferSize = -1 },
-			wantError: "buffer_size must be positive",
-		},
-		{
-			name:      "invalid trace depth",
-			modify:    func(c *Config) { c.TraceDepth = 11 },
-			wantError: "trace_depth must be between 0 and 10",
-		},
-		{
-			name:      "invalid heartbeat level",
-			modify:    func(c *Config) { c.HeartbeatLevel = 4 },
-			wantError: "heartbeat_level must be between 0 and 3",
-		},
-		{
-			name:      "invalid stdout target",
-			modify:    func(c *Config) { c.ConsoleTarget = "invalid" },
-			wantError: "invalid console_target",
-		},
-		{
-			name: "min > max check interval",
-			modify: func(c *Config) {
-				c.MinCheckIntervalMs = 1000
-				c.MaxCheckIntervalMs = 500
-			},
+			name:      "min greater than max check interval",
+			modify:    func(c *Config) { c.MinCheckIntervalMs = 1000; c.MaxCheckIntervalMs = 500 },
 			wantError: "min_check_interval_ms",
 		},
 	}
@@ -110,56 +99,95 @@ func TestConfigValidate(t *testing.T) {
 			err := cfg.Validate()
 
 			if tt.wantError == "" {
-				assert.NoError(t, err)
-			} else {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantError)
+				noErr(t, err, "Validate")
+				return
 			}
+			errContains(t, err, tt.wantError, "Validate")
 		})
 	}
 }
 
-// TestConcurrentApplyConfig verifies that applying configurations concurrently does not cause race conditions or panics
+// TestConfigRequiresRestart verifies which field changes force a processor restart.
+func TestConfigRequiresRestart(t *testing.T) {
+	tests := []struct {
+		name   string
+		modify func(*Config)
+		want   bool
+	}{
+		{"no change", func(c *Config) {}, false},
+		{"level", func(c *Config) { c.Level = LevelError }, false},
+		{"format", func(c *Config) { c.Format = "json" }, false},
+		{"sanitization", func(c *Config) { c.Sanitization = PolicyTxt }, false},
+		{"trace depth", func(c *Config) { c.TraceDepth = 3 }, false},
+		{"console target", func(c *Config) { c.ConsoleTarget = "stdout" }, false},
+		{"buffer size", func(c *Config) { c.BufferSize = 2048 }, true},
+		{"enable file", func(c *Config) { c.EnableFile = !c.EnableFile }, true},
+		{"directory", func(c *Config) { c.Directory = "/other" }, true},
+		{"name", func(c *Config) { c.Name = "other" }, true},
+		{"extension", func(c *Config) { c.Extension = "txt" }, true},
+		{"flush interval", func(c *Config) { c.FlushIntervalMs = 500 }, true},
+		{"heartbeat level", func(c *Config) { c.HeartbeatLevel = 2 }, true},
+		{"retention period", func(c *Config) { c.RetentionPeriodHrs = 4 }, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oldCfg := DefaultConfig()
+			newCfg := oldCfg.Clone()
+			tt.modify(newCfg)
+			equal(t, configRequiresRestart(oldCfg, newCfg), tt.want, "configRequiresRestart")
+		})
+	}
+}
+
+// TestCombineConfigErrors verifies aggregation and prefix deduplication.
+func TestCombineConfigErrors(t *testing.T) {
+	if err := combineConfigErrors(nil); err != nil {
+		t.Errorf("empty slice: got %v, want nil", err)
+	}
+
+	single := fmtErrorf("only one")
+	mustEqual(t, combineConfigErrors([]error{single}), single, "single error passthrough")
+
+	err := combineConfigErrors([]error{fmtErrorf("first"), fmtErrorf("second")})
+	mustErr(t, err, "combineConfigErrors")
+	msg := err.Error()
+	contains(t, msg, "multiple configuration errors", "header")
+	contains(t, msg, "1. first", "first entry")
+	contains(t, msg, "2. second", "second entry")
+	// Per-error "log: " prefixes must be stripped, leaving only the header prefix
+	equal(t, strings.Count(msg, "log: "), 1, "prefix occurrences")
+}
+
+// TestConcurrentApplyConfig verifies reconfiguration under concurrent load.
 func TestConcurrentApplyConfig(t *testing.T) {
-	logger, tmpDir := createTestLogger(t)
-	defer logger.Shutdown()
+	logger, tmpDir := newTestLogger(t)
 
 	var wg sync.WaitGroup
-
-	// Concurrent config applications
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-
 			cfg := logger.GetConfig()
-			// Vary settings
 			if id%2 == 0 {
-				cfg.Level = LevelDebug
-				cfg.Format = "json"
+				cfg.Level, cfg.Format = LevelDebug, "json"
 			} else {
-				cfg.Level = LevelInfo
-				cfg.Format = "txt"
+				cfg.Level, cfg.Format = LevelInfo, "txt"
 			}
 			cfg.TraceDepth = int64(id % 5)
 
-			err := logger.ApplyConfig(cfg)
-			assert.NoError(t, err)
-
-			// Log with new config
+			// Non-fatal only: Fatal from a non-test goroutine is undefined behavior
+			noErr(t, logger.ApplyConfig(cfg), "concurrent ApplyConfig")
 			logger.Info("config test", id)
 		}(i)
 	}
-
 	wg.Wait()
 
-	// Verify logger still functional
 	logger.Info("after concurrent config")
-	err := logger.Flush(time.Second)
-	assert.NoError(t, err)
+	noErr(t, logger.Flush(time.Second), "Flush")
 
-	// Check log file exists and has content
-	files, err := os.ReadDir(tmpDir)
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(files), 1)
+	mustEventually(t, time.Second, "post-reconfiguration record written", func() bool {
+		return strings.Contains(readLog(t, tmpDir), "after concurrent config")
+	})
 }
+
