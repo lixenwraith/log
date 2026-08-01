@@ -9,6 +9,7 @@ import (
 
 // Log level constants
 const (
+	LevelTrace int64 = -8
 	LevelDebug int64 = -4
 	LevelInfo  int64 = 0
 	LevelWarn  int64 = 4

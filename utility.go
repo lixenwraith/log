@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"unicode"
+
+	"github.com/lixenwraith/log/formatter"
 )
 
 // getTrace returns a function call trace string
@@ -83,6 +85,8 @@ func parseKeyValue(arg string) (string, string, error) {
 // Level converts level string to numeric constant
 func Level(levelStr string) (int64, error) {
 	switch strings.ToLower(strings.TrimSpace(levelStr)) {
+	case "trace":
+		return LevelTrace, nil
 	case "debug":
 		return LevelDebug, nil
 	case "info":
@@ -98,6 +102,9 @@ func Level(levelStr string) (int64, error) {
 	case "sys":
 		return LevelSys, nil
 	default:
-		return 0, fmtErrorf("invalid level string: '%s' (use debug, info, warn, error, proc, disk, sys)", levelStr)
+		return 0, fmtErrorf("invalid level string: '%s' (use trace, debug, info, warn, error, proc, disk, sys)", levelStr)
 	}
 }
+
+// LevelToString renders a level constant as its display name
+func LevelToString(level int64) string { return formatter.LevelToString(level) }

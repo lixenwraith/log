@@ -319,6 +319,8 @@ func (f *Formatter) appendValue(dst []byte, v any, serializer *sanitizer.Seriali
 // LevelToString converts integer level values to string
 func LevelToString(level int64) string {
 	switch level {
+	case -8:
+		return "TRACE"
 	case -4:
 		return "DEBUG"
 	case 0:
