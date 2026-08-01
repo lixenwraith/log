@@ -34,6 +34,7 @@ const (
 	FlagStructuredJSON int64 = 0b1000
 	FlagNoTimestamp    int64 = 0b010000
 	FlagNoLevel        int64 = 0b100000
+	FlagKV             int64 = 0b1000000 // args are alternating string keys and values
 	FlagDefault              = FlagShowTimestamp | FlagShowLevel
 )
 
@@ -44,7 +45,31 @@ type Formatter struct {
 	timestampFormat string
 	showTimestamp   bool
 	showLevel       bool
+	ctxKeys         ContextKeys
 	buf             []byte
+
+	// Serializers are stateless and format-fixed; built once to keep the
+	// per-record path allocation-free
+	serTxt  *sanitizer.Serializer
+	serJSON *sanitizer.Serializer
+	serRaw  *sanitizer.Serializer
+}
+
+// ContextSlots is the number of correlation values a Context carries
+const ContextSlots = 3
+
+// Context carries caller-stamped values emitted with a record.
+// Tag names the source; Vals are correlation counters keyed by ContextKeys.
+type Context struct {
+	Tag  string
+	Vals [ContextSlots]uint64
+}
+
+// ContextKeys names the record keys for Context fields; empty names are omitted.
+// Names are emitted verbatim and must be plain identifiers.
+type ContextKeys struct {
+	Tag  string
+	Vals [ContextSlots]string
 }
 
 // New creates a formatter with the provided sanitizer
@@ -62,6 +87,30 @@ func New(s ...*sanitizer.Sanitizer) *Formatter {
 		showTimestamp:   true,
 		showLevel:       true,
 		buf:             make([]byte, 0, 1024),
+		serTxt:          sanitizer.NewSerializer("txt", san),
+		serJSON:         sanitizer.NewSerializer("json", san),
+		serRaw:          sanitizer.NewSerializer("raw", san),
+	}
+}
+
+// ContextKeys sets the record keys used for Context values
+func (f *Formatter) ContextKeys(tag string, vals ...string) *Formatter {
+	f.ctxKeys = ContextKeys{Tag: tag}
+	for i := 0; i < len(vals) && i < ContextSlots; i++ {
+		f.ctxKeys.Vals[i] = vals[i]
+	}
+	return f
+}
+
+// serializerFor returns the cached serializer for a normalized format name
+func (f *Formatter) serializerFor(format string) *sanitizer.Serializer {
+	switch format {
+	case "json":
+		return f.serJSON
+	case "raw":
+		return f.serRaw
+	default:
+		return f.serTxt
 	}
 }
 
@@ -94,14 +143,24 @@ func (f *Formatter) ShowTimestamp(show bool) *Formatter {
 // Format formats using configured options resolved against explicit flags.
 // Returned slice aliases the internal buffer.
 func (f *Formatter) Format(flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
-	f.buf = f.AppendFormat(f.buf[:0], flags, timestamp, level, trace, args)
+	return f.FormatCtx(Context{}, flags, timestamp, level, trace, args)
+}
+
+// FormatCtx is Format with caller-stamped context.
+// Returned slice aliases the internal buffer.
+func (f *Formatter) FormatCtx(ctx Context, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
+	f.buf = f.AppendFormatCtx(f.buf[:0], ctx, flags, timestamp, level, trace, args)
 	return f.buf
 }
 
 // AppendFormat appends a formatted entry to dst using configured options
 // resolved against explicit flags. Safe for concurrent use.
 func (f *Formatter) AppendFormat(dst []byte, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
-	// CHANGED: D3 — additive resolution replaces `flags == 0` guard
+	return f.AppendFormatCtx(dst, Context{}, flags, timestamp, level, trace, args)
+}
+
+// AppendFormatCtx is AppendFormat with caller-stamped context
+func (f *Formatter) AppendFormatCtx(dst []byte, ctx Context, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
 	eff := flags &^ (FlagShowTimestamp | FlagShowLevel)
 	if resolveShow(flags, FlagShowTimestamp, FlagNoTimestamp, f.showTimestamp) {
 		eff |= FlagShowTimestamp
@@ -109,31 +168,25 @@ func (f *Formatter) AppendFormat(dst []byte, flags int64, timestamp time.Time, l
 	if resolveShow(flags, FlagShowLevel, FlagNoLevel, f.showLevel) {
 		eff |= FlagShowLevel
 	}
-	return f.AppendFormatWithOptions(dst, f.format, eff, timestamp, level, trace, args)
-}
-
-func resolveShow(flags, show, no int64, configured bool) bool {
-	switch {
-	case flags&no != 0:
-		return false
-	case flags&show != 0:
-		return true
-	default:
-		return configured
-	}
+	return f.AppendFormatWithOptionsCtx(dst, f.format, ctx, eff, timestamp, level, trace, args)
 }
 
 // FormatWithOptions formats with explicit format and flags, ignoring
 // configured display defaults. Returned slice aliases the internal buffer.
 func (f *Formatter) FormatWithOptions(format string, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
-	f.buf = f.AppendFormatWithOptions(f.buf[:0], format, flags, timestamp, level, trace, args)
+	f.buf = f.AppendFormatWithOptionsCtx(f.buf[:0], format, Context{}, flags, timestamp, level, trace, args)
 	return f.buf
 }
 
-// AppendFormatWithOptions is the allocation-explicit core. Safe for
-// concurrent use. Unknown formats fall back to "txt".
+// AppendFormatWithOptions is the compatibility wrapper over the context core
 func (f *Formatter) AppendFormatWithOptions(dst []byte, format string, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
-	// FlagRaw completely bypasses formatting and sanitization
+	return f.AppendFormatWithOptionsCtx(dst, format, Context{}, flags, timestamp, level, trace, args)
+}
+
+// AppendFormatWithOptionsCtx is the allocation-explicit core. Safe for
+// concurrent use. Unknown formats fall back to "txt".
+func (f *Formatter) AppendFormatWithOptionsCtx(dst []byte, format string, ctx Context, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
+	// FlagRaw completely bypasses formatting, context, and sanitization
 	if flags&FlagRaw != 0 {
 		for i, arg := range args {
 			if i > 0 {
@@ -155,9 +208,8 @@ func (f *Formatter) AppendFormatWithOptions(dst []byte, format string, flags int
 		return dst
 	}
 
-	// unknown formats normalize to txt instead of returning nil
 	format = normalizeFormat(format)
-	serializer := sanitizer.NewSerializer(format, f.sanitizer)
+	serializer := f.serializerFor(format)
 
 	switch format {
 	case "raw":
@@ -166,9 +218,20 @@ func (f *Formatter) AppendFormatWithOptions(dst []byte, format string, flags int
 		}
 		return dst
 	case "json":
-		return f.appendJSON(dst, flags, timestamp, level, trace, args, serializer)
+		return f.appendJSON(dst, ctx, flags, timestamp, level, trace, args, serializer)
 	default: // "txt"
-		return f.appendTxt(dst, flags, timestamp, level, trace, args, serializer)
+		return f.appendTxt(dst, ctx, flags, timestamp, level, trace, args, serializer)
+	}
+}
+
+func resolveShow(flags, show, no int64, configured bool) bool {
+	switch {
+	case flags&no != 0:
+		return false
+	case flags&show != 0:
+		return true
+	default:
+		return configured
 	}
 }
 
@@ -188,10 +251,8 @@ func (f *Formatter) FormatValue(v any) []byte {
 }
 
 // AppendValue appends a single formatted value to dst. Safe for concurrent use.
-// ADDED: R1
 func (f *Formatter) AppendValue(dst []byte, v any) []byte {
-	serializer := sanitizer.NewSerializer(normalizeFormat(f.format), f.sanitizer)
-	return f.appendValue(dst, v, serializer, false)
+	return f.appendValue(dst, v, f.serializerFor(normalizeFormat(f.format)), false)
 }
 
 // FormatArgs formats multiple arguments. Returned slice aliases the internal buffer.
@@ -202,9 +263,8 @@ func (f *Formatter) FormatArgs(args ...any) []byte {
 
 // AppendArgs appends multiple space-separated values to dst. Safe for
 // concurrent use.
-// ADDED: R1
 func (f *Formatter) AppendArgs(dst []byte, args ...any) []byte {
-	serializer := sanitizer.NewSerializer(normalizeFormat(f.format), f.sanitizer)
+	serializer := f.serializerFor(normalizeFormat(f.format))
 	for i, arg := range args {
 		dst = f.appendValue(dst, arg, serializer, i > 0)
 	}
@@ -278,8 +338,29 @@ func LevelToString(level int64) string {
 	}
 }
 
+// appendJSONKey writes a quoted literal key followed by ':'
+func appendJSONKey(dst []byte, key string) []byte {
+	dst = append(dst, '"')
+	dst = append(dst, key...)
+	dst = append(dst, '"', ':')
+	return dst
+}
+
+// isKV reports whether args form an even-length list with string keys
+func isKV(args []any) bool {
+	if len(args) == 0 || len(args)%2 != 0 {
+		return false
+	}
+	for i := 0; i < len(args); i += 2 {
+		if _, ok := args[i].(string); !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // appendJSON unifies JSON output over a caller-provided buffer
-func (f *Formatter) appendJSON(dst []byte, flags int64, timestamp time.Time, level int64, trace string, args []any, serializer *sanitizer.Serializer) []byte {
+func (f *Formatter) appendJSON(dst []byte, ctx Context, flags int64, timestamp time.Time, level int64, trace string, args []any, serializer *sanitizer.Serializer) []byte {
 	dst = append(dst, '{')
 	needsComma := false
 
@@ -297,6 +378,27 @@ func (f *Formatter) appendJSON(dst []byte, flags int64, timestamp time.Time, lev
 		dst = append(dst, `"level":"`...)
 		dst = append(dst, LevelToString(level)...)
 		dst = append(dst, '"')
+		needsComma = true
+	}
+
+	// Caller-stamped context, emitted as top-level keys
+	if ctx.Tag != "" && f.ctxKeys.Tag != "" {
+		if needsComma {
+			dst = append(dst, ',')
+		}
+		dst = appendJSONKey(dst, f.ctxKeys.Tag)
+		serializer.WriteString(&dst, ctx.Tag)
+		needsComma = true
+	}
+	for i, key := range f.ctxKeys.Vals {
+		if key == "" {
+			continue
+		}
+		if needsComma {
+			dst = append(dst, ',')
+		}
+		dst = appendJSONKey(dst, key)
+		dst = strconv.AppendUint(dst, ctx.Vals[i], 10)
 		needsComma = true
 	}
 
@@ -336,19 +438,32 @@ func (f *Formatter) appendJSON(dst []byte, flags int64, timestamp time.Time, lev
 		}
 	}
 
-	// Regular JSON with fields array
 	if len(args) > 0 {
 		if needsComma {
 			dst = append(dst, ',')
 		}
-		dst = append(dst, `"fields":[`...)
-		for i, arg := range args {
-			if i > 0 {
-				dst = append(dst, ',')
+		// Keyed object when the caller declares k/v args, positional array otherwise
+		if flags&FlagKV != 0 && isKV(args) {
+			dst = append(dst, `"fields":{`...)
+			for i := 0; i < len(args); i += 2 {
+				if i > 0 {
+					dst = append(dst, ',')
+				}
+				serializer.WriteString(&dst, args[i].(string))
+				dst = append(dst, ':')
+				dst = f.appendValue(dst, args[i+1], serializer, false)
 			}
-			dst = f.appendValue(dst, arg, serializer, false)
+			dst = append(dst, '}')
+		} else {
+			dst = append(dst, `"fields":[`...)
+			for i, arg := range args {
+				if i > 0 {
+					dst = append(dst, ',')
+				}
+				dst = f.appendValue(dst, arg, serializer, false)
+			}
+			dst = append(dst, ']')
 		}
-		dst = append(dst, ']')
 	}
 
 	dst = append(dst, '}', '\n')
@@ -356,7 +471,7 @@ func (f *Formatter) appendJSON(dst []byte, flags int64, timestamp time.Time, lev
 }
 
 // appendTxt handles txt format output over a caller-provided buffer
-func (f *Formatter) appendTxt(dst []byte, flags int64, timestamp time.Time, level int64, trace string, args []any, serializer *sanitizer.Serializer) []byte {
+func (f *Formatter) appendTxt(dst []byte, ctx Context, flags int64, timestamp time.Time, level int64, trace string, args []any, serializer *sanitizer.Serializer) []byte {
 	needsSpace := false
 
 	if flags&FlagShowTimestamp != 0 {
@@ -372,14 +487,35 @@ func (f *Formatter) appendTxt(dst []byte, flags int64, timestamp time.Time, leve
 		needsSpace = true
 	}
 
+	if ctx.Tag != "" && f.ctxKeys.Tag != "" {
+		if needsSpace {
+			dst = append(dst, ' ')
+		}
+		dst = append(dst, f.ctxKeys.Tag...)
+		dst = append(dst, '=')
+		dst = f.appendValue(dst, ctx.Tag, serializer, false)
+		needsSpace = true
+	}
+	for i, key := range f.ctxKeys.Vals {
+		if key == "" {
+			continue
+		}
+		if needsSpace {
+			dst = append(dst, ' ')
+		}
+		dst = append(dst, key...)
+		dst = append(dst, '=')
+		dst = strconv.AppendUint(dst, ctx.Vals[i], 10)
+		needsSpace = true
+	}
+
 	if trace != "" {
 		if needsSpace {
 			dst = append(dst, ' ')
 		}
 		// Sanitize trace to prevent terminal control sequence injection
-		traceHandler := sanitizer.NewSerializer("txt", f.sanitizer)
 		tempBuf := make([]byte, 0, len(trace)*2)
-		traceHandler.WriteString(&tempBuf, trace)
+		f.serTxt.WriteString(&tempBuf, trace)
 		// Extract content without quotes if added by txt serializer
 		if len(tempBuf) > 2 && tempBuf[0] == '"' && tempBuf[len(tempBuf)-1] == '"' {
 			dst = append(dst, tempBuf[1:len(tempBuf)-1]...)
@@ -389,9 +525,21 @@ func (f *Formatter) appendTxt(dst []byte, flags int64, timestamp time.Time, leve
 		needsSpace = true
 	}
 
-	for _, arg := range args {
-		dst = f.appendValue(dst, arg, serializer, needsSpace)
-		needsSpace = true
+	if flags&FlagKV != 0 && isKV(args) {
+		for i := 0; i < len(args); i += 2 {
+			if needsSpace {
+				dst = append(dst, ' ')
+			}
+			dst = append(dst, args[i].(string)...)
+			dst = append(dst, '=')
+			dst = f.appendValue(dst, args[i+1], serializer, false)
+			needsSpace = true
+		}
+	} else {
+		for _, arg := range args {
+			dst = f.appendValue(dst, arg, serializer, needsSpace)
+			needsSpace = true
+		}
 	}
 
 	dst = append(dst, '\n')
@@ -402,4 +550,3 @@ func (f *Formatter) appendTxt(dst []byte, flags int64, timestamp time.Time, leve
 func (f *Formatter) Reset() {
 	f.buf = f.buf[:0]
 }
-

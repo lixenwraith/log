@@ -42,7 +42,7 @@ func TestLogRotation(t *testing.T) {
 		switch {
 		case name == "log.log":
 			hasActive = true
-		// Archive pattern: log_YYMMDD_HHMMSS_<nano>.log
+		// Archive pattern: log_YYMMDD_HHMMSS[_N].log
 		case strings.HasPrefix(name, "log_") && strings.HasSuffix(name, ".log"):
 			archives++
 		default:
@@ -195,7 +195,8 @@ func TestLogDirAccounting(t *testing.T) {
 	equal(t, count, 0, "count of missing dir")
 }
 
-// TestArchiveNaming verifies archive names are unique and carry the base name.
+// TestArchiveNaming verifies archive names carry the base name and never
+// collide with a file already present in the directory.
 func TestArchiveNaming(t *testing.T) {
 	logger, tmpDir := newTestLogger(t)
 
@@ -203,12 +204,17 @@ func TestArchiveNaming(t *testing.T) {
 
 	ts := time.Now()
 	first := logger.generateArchiveLogFileName(ts)
-	second := logger.generateArchiveLogFileName(ts.Add(time.Nanosecond))
-
 	isTrue(t, strings.HasPrefix(first, "log_"), "archive prefix")
 	isTrue(t, strings.HasSuffix(first, ".log"), "archive extension")
-	if first == second {
-		t.Errorf("archive names must be unique at nanosecond resolution: %s", first)
-	}
-}
 
+	// Names are second-resolution; the counter disambiguates against files
+	// already on disk, not against clock resolution
+	mustNoErr(t, os.WriteFile(filepath.Join(tmpDir, first), []byte("archived"), 0644), "WriteFile archive")
+
+	second := logger.generateArchiveLogFileName(ts)
+	if second == first {
+		t.Errorf("archive name collided with existing file: %s", second)
+	}
+	isTrue(t, strings.HasPrefix(second, "log_"), "archive prefix")
+	isTrue(t, strings.HasSuffix(second, ".log"), "archive extension")
+}

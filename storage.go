@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
-	"syscall"
 	"time"
 )
 
@@ -25,10 +23,14 @@ func (l *Logger) performSync() {
 			if err := currentLogFile.Sync(); err != nil {
 				// Log sync error
 				syncErrRecord := logRecord{
-					Flags:     FlagDefault,
+					Flags:     FlagDefault | FlagKV,
 					TimeStamp: time.Now(),
 					Level:     LevelWarn,
-					Args:      []any{"Log file sync failed", "file", currentLogFile.Name(), "error", err.Error()},
+					Args: []any{
+						"msg", "log file sync failed",
+						"file", currentLogFile.Name(),
+						"error", err.Error(),
+					},
 				}
 				l.sendLogRecord(syncErrRecord)
 			}
@@ -106,8 +108,11 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 		if err := l.cleanOldLogs(spaceToFree); err != nil {
 			if !l.state.DiskFullLogged.Swap(true) {
 				diskFullRecord := logRecord{
-					Flags: FlagDefault, TimeStamp: time.Now(), Level: LevelError,
-					Args: []any{"Log directory full or disk space low, cleanup failed", "error", err.Error()},
+					Flags: FlagDefault | FlagKV, TimeStamp: time.Now(), Level: LevelError,
+					Args: []any{
+						"msg", "log directory full or disk space low, cleanup failed",
+						"error", err.Error(),
+					},
 				}
 				l.sendLogRecord(diskFullRecord)
 			}
@@ -135,27 +140,27 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 	}
 }
 
-// getDiskFreeSpace retrieves available disk space for the given path
-func (l *Logger) getDiskFreeSpace(path string) (int64, error) {
-	var stat syscall.Statfs_t
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, fmtErrorf("log directory '%s' does not exist for disk check: %w", path, err)
-		}
-		return 0, fmtErrorf("failed to stat log directory '%s': %w", path, err)
-	}
-	if !info.IsDir() {
-		path = filepath.Dir(path)
-	}
-
-	if err := syscall.Statfs(path, &stat); err != nil {
-		return 0, fmtErrorf("failed to get disk stats for '%s': %w", path, err)
-	}
-	// Explicit cast to int64 to satisfy both Linux and FreebSD
-	availableBytes := int64(stat.Bavail) * int64(stat.Bsize)
-	return availableBytes, nil
-}
+// // getDiskFreeSpace retrieves available disk space for the given path
+// func (l *Logger) getDiskFreeSpace(path string) (int64, error) {
+// 	var stat syscall.Statfs_t
+// 	info, err := os.Stat(path)
+// 	if err != nil {
+// 		if os.IsNotExist(err) {
+// 			return 0, fmtErrorf("log directory '%s' does not exist for disk check: %w", path, err)
+// 		}
+// 		return 0, fmtErrorf("failed to stat log directory '%s': %w", path, err)
+// 	}
+// 	if !info.IsDir() {
+// 		path = filepath.Dir(path)
+// 	}
+//
+// 	if err := syscall.Statfs(path, &stat); err != nil {
+// 		return 0, fmtErrorf("failed to get disk stats for '%s': %w", path, err)
+// 	}
+// 	// Explicit cast to int64 to satisfy both Linux and FreebSD
+// 	availableBytes := int64(stat.Bavail) * int64(stat.Bsize)
+// 	return availableBytes, nil
+// }
 
 // getLogDirSize calculates total size of log files matching the current extension
 func (l *Logger) getLogDirSize(dir, ext string) (int64, error) {
@@ -254,7 +259,9 @@ func (l *Logger) cleanOldLogs(required int64) error {
 	return nil
 }
 
-// updateEarliestFileTime scans the log directory for the oldest log file
+// updateEarliestFileTime scans the log directory for the oldest log file.
+// Matches by extension only: a name-prefix filter would hide files written by
+// earlier runs when the active name carries a per-run timestamp.
 func (l *Logger) updateEarliestFileTime() {
 	c := l.getConfig()
 	dir := c.Directory
@@ -275,17 +282,15 @@ func (l *Logger) updateEarliestFileTime() {
 	}
 
 	targetExt := "." + ext
-	prefix := name + "_"
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		fname := entry.Name()
-		// Skip the active log file
 		if fname == staticLogName {
-			continue
+			continue // Skip the active log file
 		}
-		if !strings.HasPrefix(fname, prefix) || (ext != "" && filepath.Ext(fname) != targetExt) {
+		if ext != "" && filepath.Ext(fname) != targetExt {
 			continue
 		}
 		info, errInfo := entry.Info()
@@ -371,19 +376,28 @@ func (l *Logger) getStaticLogFilePath() string {
 	return filepath.Join(dir, filename)
 }
 
-// generateArchiveLogFileName creates a timestamped filename for archived logs during rotation
+// fileExists reports whether path names an existing regular file
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+// generateArchiveLogFileName creates a second-resolution name for a rotated
+// log, disambiguating with a counter when that name is already taken
 func (l *Logger) generateArchiveLogFileName(timestamp time.Time) string {
 	c := l.getConfig()
-	ext := c.Extension
-	name := c.Name
 
-	tsFormat := timestamp.Format("060102_150405")
-	nano := timestamp.Nanosecond()
-
-	if ext != "" {
-		return fmt.Sprintf("%s_%s_%d.%s", name, tsFormat, nano, ext)
+	suffix := ""
+	if c.Extension != "" {
+		suffix = "." + c.Extension
 	}
-	return fmt.Sprintf("%s_%s_%d", name, tsFormat, nano)
+	base := fmt.Sprintf("%s_%s", c.Name, timestamp.Format("060102_150405"))
+
+	name := base + suffix
+	for i := 1; i < 1000 && fileExists(filepath.Join(c.Directory, name)); i++ {
+		name = fmt.Sprintf("%s_%d%s", base, i, suffix)
+	}
+	return name
 }
 
 // createNewLogFile generates a unique name and opens a new log file
@@ -449,6 +463,7 @@ func (l *Logger) rotateLogFile() error {
 		l.internalLog("failed to rename log file from '%s' to '%s': %v. file logging disabled.",
 			currentPath, archivePath, err)
 		l.state.LoggerDisabled.Store(true)
+		l.refreshLevelGate()
 		return fmtErrorf("failed to rotate log file, logging is disabled: %w", err)
 	}
 
@@ -492,4 +507,3 @@ func (l *Logger) getLogFileCount(dir, ext string) (int, error) {
 	}
 	return count, nil
 }
-

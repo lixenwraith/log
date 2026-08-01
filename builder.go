@@ -7,8 +7,10 @@ import (
 // Builder provides a fluent API for building logger configurations
 // It wraps a Config instance and provides chainable methods for setting values
 type Builder struct {
-	cfg *Config
-	err error // Accumulate errors for deferred handling
+	err     error // Accumulate errors for deferred handling
+	cfg     *Config
+	ctxTag  string
+	ctxVals []string
 }
 
 // NewBuilder creates a new configuration builder with default values
@@ -16,6 +18,13 @@ func NewBuilder() *Builder {
 	return &Builder{
 		cfg: DefaultConfig(),
 	}
+}
+
+// ContextKeys names the record keys for Context values
+func (b *Builder) ContextKeys(tag string, vals ...string) *Builder {
+	b.ctxTag = tag
+	b.ctxVals = vals
+	return b
 }
 
 // Build creates a new Logger instance with the specified configuration
@@ -30,6 +39,9 @@ func (b *Builder) Build() (*Logger, error) {
 	// Apply the built configuration, handling all initialization and validation
 	if err := logger.ApplyConfig(b.cfg); err != nil {
 		return nil, err
+	}
+	if b.ctxTag != "" || len(b.ctxVals) > 0 {
+		logger.SetContextKeys(b.ctxTag, b.ctxVals...)
 	}
 
 	return logger, nil

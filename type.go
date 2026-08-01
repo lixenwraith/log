@@ -3,15 +3,24 @@ package log
 import (
 	"io"
 	"time"
+
+	"github.com/lixenwraith/log/formatter"
 )
+
+// Context carries caller-stamped values emitted with a record
+type Context = formatter.Context
+
+// ContextSlots is the number of correlation values a Context carries
+const ContextSlots = formatter.ContextSlots
 
 // logRecord represents a single log entry
 type logRecord struct {
-	Flags     int64
 	TimeStamp time.Time
-	Level     int64
 	Trace     string
 	Args      []any
+	Ctx       Context
+	Flags     int64
+	Level     int64
 }
 
 // TimerSet holds all timers used in processLogs

@@ -7,8 +7,37 @@ import (
 	"time"
 )
 
+// // procRecords parses PROC heartbeat records out of json-formatted content.
+// // Heartbeat arguments are emitted as a flat key/value array.
+// func procRecords(tb testing.TB, content string) []map[string]any {
+// 	tb.Helper()
+// 	var out []map[string]any
+// 	for _, line := range strings.Split(content, "\n") {
+// 		if !strings.Contains(line, `"level":"PROC"`) {
+// 			continue
+// 		}
+// 		var entry map[string]any
+// 		if json.Unmarshal([]byte(line), &entry) != nil {
+// 			continue
+// 		}
+// 		fields, ok := entry["fields"].([]any)
+// 		if !ok {
+// 			continue
+// 		}
+// 		rec := make(map[string]any, len(fields)/2)
+// 		for i := 0; i+1 < len(fields); i += 2 {
+// 			if key, ok := fields[i].(string); ok {
+// 				rec[key] = fields[i+1]
+// 			}
+// 		}
+// 		out = append(out, rec)
+// 	}
+// 	return out
+// }
+
 // procRecords parses PROC heartbeat records out of json-formatted content.
-// Heartbeat arguments are emitted as a flat key/value array.
+// Heartbeat arguments are emitted as a keyed object (FlagKV); the flat
+// key/value array is still accepted for records written without the flag.
 func procRecords(tb testing.TB, content string) []map[string]any {
 	tb.Helper()
 	var out []map[string]any
@@ -20,17 +49,18 @@ func procRecords(tb testing.TB, content string) []map[string]any {
 		if json.Unmarshal([]byte(line), &entry) != nil {
 			continue
 		}
-		fields, ok := entry["fields"].([]any)
-		if !ok {
-			continue
-		}
-		rec := make(map[string]any, len(fields)/2)
-		for i := 0; i+1 < len(fields); i += 2 {
-			if key, ok := fields[i].(string); ok {
-				rec[key] = fields[i+1]
+		switch fields := entry["fields"].(type) {
+		case map[string]any:
+			out = append(out, fields)
+		case []any:
+			rec := make(map[string]any, len(fields)/2)
+			for i := 0; i+1 < len(fields); i += 2 {
+				if key, ok := fields[i].(string); ok {
+					rec[key] = fields[i+1]
+				}
 			}
+			out = append(out, rec)
 		}
-		out = append(out, rec)
 	}
 	return out
 }

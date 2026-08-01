@@ -28,6 +28,7 @@ const (
 	FlagShowTimestamp  = formatter.FlagShowTimestamp
 	FlagShowLevel      = formatter.FlagShowLevel
 	FlagStructuredJSON = formatter.FlagStructuredJSON
+	FlagKV             = formatter.FlagKV
 	FlagNoTimestamp    = formatter.FlagNoTimestamp
 	FlagNoLevel        = formatter.FlagNoLevel
 	FlagDefault        = formatter.FlagDefault
@@ -57,4 +58,3 @@ const (
 	adaptiveIntervalFactor float64 = 1.5 // Slow down
 	adaptiveSpeedUpFactor  float64 = 0.8 // Speed up
 )
-

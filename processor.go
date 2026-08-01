@@ -7,10 +7,14 @@ import (
 	"github.com/lixenwraith/log/formatter"
 )
 
-// processLogs is the main log processing loop running in a separate goroutine
-func (l *Logger) processLogs(ch <-chan logRecord) {
-	l.state.ProcessorExited.Store(false)
-	defer l.state.ProcessorExited.Store(true)
+// processLogs is the main log processing loop running in a separate goroutine.
+// Exits on stop, draining buffered records first. No panic recovery: a fault
+// here is fatal by design and is surfaced by the host's spawner.
+func (l *Logger) processLogs(ch <-chan logRecord, stop <-chan struct{}, done chan<- struct{}) {
+	defer func() {
+		l.state.ProcessorExited.Store(true)
+		close(done)
+	}()
 
 	// Set up timers and state variables
 	timers := l.setupProcessingTimers()
@@ -45,12 +49,12 @@ func (l *Logger) processLogs(ch <-chan logRecord) {
 	// --- Main Loop ---
 	for {
 		select {
-		case record, ok := <-ch:
-			if !ok {
-				l.performSync()
-				return
-			}
+		case <-stop:
+			l.drain(ch)
+			l.performSync()
+			return
 
+		case record := <-ch:
 			// Process the received log record
 			bytesWritten := l.processLogRecord(record)
 			if bytesWritten > 0 {
@@ -81,7 +85,7 @@ func (l *Logger) processLogs(ch <-chan logRecord) {
 			}
 
 		case confirmChan := <-l.state.flushRequestChan:
-			// Barrier semantics — drain queued records before sync
+			// Barrier: drain queued records before sync
 			l.handleFlushRequest(ch, confirmChan)
 
 		case <-timers.retentionChan:
@@ -91,6 +95,26 @@ func (l *Logger) processLogs(ch <-chan logRecord) {
 			l.handleHeartbeat()
 		}
 	}
+}
+
+// drain processes every buffered record without blocking
+func (l *Logger) drain(ch <-chan logRecord) {
+	for {
+		select {
+		case record := <-ch:
+			l.processLogRecord(record)
+		default:
+			return
+		}
+	}
+}
+
+// handleFlushRequest drains pending records, then syncs. Gives Flush barrier
+// semantics: records enqueued before the Flush call are processed first.
+func (l *Logger) handleFlushRequest(ch <-chan logRecord, confirmChan chan struct{}) {
+	l.drain(ch)
+	l.performSync()
+	close(confirmChan)
 }
 
 // processLogRecord handles individual log records and returns bytes written
@@ -113,7 +137,8 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 	f := formatterPtr.(*formatter.Formatter)
 
 	// Format the log entry using atomically-loaded formatter
-	formattedData := f.Format(
+	formattedData := f.FormatCtx(
+		record.Ctx,
 		record.Flags,
 		record.TimeStamp,
 		record.Level,
@@ -193,27 +218,6 @@ func (l *Logger) handleFlushTick() {
 	}
 }
 
-// handleFlushRequest drains pending records, then syncs. Gives Flush barrier semantics:
-// Records enqueued before the Flush call are processed before confirmation.
-// Channel close is left to the main loop.
-func (l *Logger) handleFlushRequest(ch <-chan logRecord, confirmChan chan struct{}) {
-	for {
-		select {
-		case record, ok := <-ch:
-			if !ok {
-				l.performSync()
-				close(confirmChan)
-				return
-			}
-			l.processLogRecord(record)
-		default:
-			l.performSync()
-			close(confirmChan)
-			return
-		}
-	}
-}
-
 // handleRetentionCheck performs file retention check and cleanup
 func (l *Logger) handleRetentionCheck() {
 	c := l.getConfig()
@@ -244,10 +248,7 @@ func (l *Logger) adjustDiskCheckInterval(timers *TimerSet, lastCheckTime time.Ti
 		return
 	}
 
-	elapsed := time.Since(lastCheckTime)
-	if elapsed < minWaitTime { // Min arbitrary reasonable value
-		elapsed = minWaitTime
-	}
+	elapsed := max(time.Since(lastCheckTime), minWaitTime) // Min arbitrary reasonable value
 
 	logsPerSecond := float64(logsSinceLastCheck) / elapsed.Seconds()
 	targetLogsPerSecond := float64(100) // Baseline
@@ -281,4 +282,3 @@ func (l *Logger) adjustDiskCheckInterval(timers *TimerSet, lastCheckTime time.Ti
 
 	timers.diskCheckTicker.Reset(newInterval)
 }
-

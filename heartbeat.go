@@ -128,18 +128,16 @@ func (l *Logger) logSysHeartbeat() {
 	l.writeHeartbeatRecord(LevelSys, sysArgs)
 }
 
-// writeHeartbeatRecord creates and sends a heartbeat log record through the main processing channel
+// writeHeartbeatRecord creates and sends a heartbeat record, bypassing the level gate
 func (l *Logger) writeHeartbeatRecord(level int64, args []any) {
 	if l.state.LoggerDisabled.Load() || l.state.ShutdownCalled.Load() {
 		return
 	}
 
-	// Create heartbeat record with appropriate flags
 	record := logRecord{
-		Flags:     FlagDefault | FlagShowLevel,
+		Flags:     FlagDefault | FlagKV,
 		TimeStamp: time.Now(),
 		Level:     level,
-		Trace:     "",
 		Args:      args,
 	}
 

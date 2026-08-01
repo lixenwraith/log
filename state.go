@@ -16,6 +16,12 @@ type State struct {
 	Started         atomic.Bool // Tracks calls to Start() and Stop()
 	ProcessorExited atomic.Bool // Tracks if the processor goroutine is running or has exited
 
+	// Emit fast path: config mirrors refreshed by applyConfig and the
+	// lifecycle transitions. Level holds levelOff while emission is closed
+	Level      atomic.Int64
+	Flags      atomic.Int64
+	TraceDepth atomic.Int64
+
 	// Flushing state
 	flushRequestChan chan chan struct{} // Channel to request a flush
 	flushMutex       sync.Mutex         // Protect concurrent Flush calls
@@ -30,6 +36,8 @@ type State struct {
 
 	// Log state
 	ActiveLogChannel atomic.Value  // stores chan logRecord
+	ProcStop         atomic.Value  // stores chan struct{}, closed to signal exit
+	ProcDone         atomic.Value  // stores chan struct{}, closed by the processor
 	DroppedLogs      atomic.Uint64 // Counter for logs dropped since last heartbeat
 	TotalDroppedLogs atomic.Uint64 // Counter for total logs dropped since logger start
 

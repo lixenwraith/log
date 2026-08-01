@@ -53,7 +53,7 @@ func TestFullLifecycle(t *testing.T) {
 
 	// MaxSizeKB=1 forces rotation, so assertions span every file in the directory
 	mustEventually(t, 3*time.Second, "proc heartbeat emitted", func() bool {
-		return strings.Contains(readAllLogs(t, tmpDir), `"type","proc"`)
+		return strings.Contains(readAllLogs(t, tmpDir), `"type":"proc"`)
 	})
 	mustNoErr(t, logger.Flush(time.Second), "Flush")
 
@@ -63,8 +63,8 @@ func TestFullLifecycle(t *testing.T) {
 	contains(t, content, `"user_id":123`, "structured field")
 	contains(t, content, "raw data write", "raw write")
 	contains(t, content, "after reconfiguration", "post-reconfiguration record")
-	contains(t, content, `"type","disk"`, "disk heartbeat")
-	contains(t, content, `"type","sys"`, "sys heartbeat")
+	contains(t, content, `"type":"disk"`, "disk heartbeat")
+	contains(t, content, `"type":"sys"`, "sys heartbeat")
 
 	files, err := os.ReadDir(tmpDir)
 	mustNoErr(t, err, "ReadDir")
@@ -162,4 +162,3 @@ func TestErrorRecovery(t *testing.T) {
 		isTrue(t, logger.state.DiskStatusOK.Load(), "DiskStatusOK after recovery")
 	})
 }
-
