@@ -96,7 +96,6 @@ func TestConcurrentOperations(t *testing.T) {
 		for i := range 3 {
 			// Non-fatal only: Fatal outside the test goroutine is undefined behavior
 			noErr(t, logger.ApplyConfigString(fmt.Sprintf("trace_depth=%d", i)), "ApplyConfigString")
-			time.Sleep(50 * time.Millisecond)
 		}
 	}()
 
@@ -104,9 +103,8 @@ func TestConcurrentOperations(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range 5 {
-			// Timeout must exceed worst-case contention on flushMutex under load
+			// Allow the fixed workload to complete under race instrumentation
 			noErr(t, logger.Flush(2*time.Second), "concurrent Flush")
-			time.Sleep(30 * time.Millisecond)
 		}
 	}()
 

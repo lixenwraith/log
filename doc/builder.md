@@ -14,7 +14,7 @@ builder := log.NewBuilder()
 
 ## Builder Methods
 
-All builder methods return `*Builder` for chaining. Errors are accumulated and returned by `Build()`.
+All builder methods return `*Builder` for chaining. Validation errors are returned by `Build()`. Builders are not safe for concurrent mutation; each built logger owns a configuration snapshot.
 
 ### Common Methods
 
@@ -25,7 +25,7 @@ All builder methods return `*Builder` for chaining. Errors are accumulated and r
 | `Name(name string)`                   | `name`: Base filename         | Sets log file base name                     |
 | `Directory(dir string)`               | `dir`: Path                   | Sets log directory                          |
 | `Format(format string)`               | `format`: Output format       | Sets format ("txt", "json", "raw")          |
-| `Sanitization(policy string)`         | `policy`: Sanitization policy | Sets policy ("txt", "json", "raw", "shell")  |
+| `Sanitization(policy sanitizer.PolicyPreset)`         | `policy`: Sanitization policy | Sets policy ("txt", "json", "raw", "shell")  |
 | `Extension(ext string)`               | `ext`: File extension         | Sets log file extension                     |
 | `BufferSize(size int64)`              | `size`: Buffer size           | Sets channel buffer size                    |
 | `MaxSizeKB(size int64)`               | `size`: Size in KB            | Sets max file size in KB                    |
@@ -36,7 +36,7 @@ All builder methods return `*Builder` for chaining. Errors are accumulated and r
 | `MinDiskFreeMB(size int64)`           | `size`: Size in MB            | Sets minimum required free disk space in MB |
 | `EnableConsole(enable bool)`          | `enable`: Boolean             | Enables console output                      |
 | `EnableFile(enable bool)`             | `enable`: Boolean             | Enables file output                         |
-| `ConsoleTarget(target string)`        | `target`: "stdout"/"stderr"   | Sets console output target                  |
+| `ConsoleTarget(target string)`        | `target`: "stdout"/"stderr"/"split"   | Sets console output target                  |
 | `ShowTimestamp(show bool)`            | `show`: Boolean               | Controls timestamp display                  |
 | `ShowLevel(show bool)`                | `show`: Boolean               | Controls log level display                  |
 | `TimestampFormat(format string)`      | `format`: Time format         | Sets timestamp format (Go time format)      |

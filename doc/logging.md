@@ -44,7 +44,7 @@ logger.ApplyConfigString("level=8")   // Error only
 
 ### Key-Value Pairs
 
-Use structured key-value pairs for machine-parseable logs:
+Ordinary methods emit positional arguments (JSON arrays). Use `LogStructured`, or `LogContext` with `FlagKV`, when named JSON fields are required:
 
 ```go
 logger.Info("User login",
@@ -117,9 +117,9 @@ func logWithContext(ctx context.Context, logger *log.Logger, level string, msg s
     
     switch level {
     case "info":
-        logger.Info(msg, fields...)
+        logger.Info(append([]any{msg}, fields...)...)
     case "error":
-        logger.Error(msg, fields...)
+        logger.Error(append([]any{msg}, fields...)...)
     }
 }
 ```
@@ -130,11 +130,11 @@ The logger supports three output formats, each with configurable sanitization. T
 
 ### Txt Format (Human-Readable)
 
-Default format for development and debugging:
+Text format for development and debugging (select `format=txt`):
 
 ```
-2024-01-15T10:30:45.123456789Z INFO User login user_id=42 email=user@example.com ip=192.168.1.100
-2024-01-15T10:30:45.234567890Z WARN Rate limit approaching user_id=42 requests=95 limit=100
+2024-01-15T10:30:45.123456789Z INFO "User login" user_id 42 email user@example.com ip 192.168.1.100
+2024-01-15T10:30:45.234567890Z WARN "Rate limit approaching" user_id 42 requests 95 limit 100
 ```
 
 Note: The txt format applies the configured sanitization policy (default: raw). Non-printable characters can be hex-encoded using `sanitization=txt` configuration.
@@ -204,8 +204,8 @@ func processPayment(amount float64) error {
 
 Output includes function names:
 ```
-2024-01-15T10:30:45.123456789Z INFO processPayment Processing payment amount=99.99
-2024-01-15T10:30:45.234567890Z ERROR validateAmount -> processPayment -> main Payment validation failed amount=-10 error="negative amount"
+2024-01-15T10:30:45.123456789Z INFO processPayment "Processing payment" amount 99.99
+2024-01-15T10:30:45.234567890Z ERROR main -> processPayment "Payment validation failed" amount -10 error "negative amount"
 ```
 
 ### Trace Depth Guidelines

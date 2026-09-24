@@ -3,6 +3,7 @@ package log
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -18,9 +19,11 @@ func (l *Logger) getFlags() int64 {
 	return l.state.Flags.Load()
 }
 
-// sendLogRecord queues a record without blocking. The channel is never closed,
-// so no recovery is needed: a detached (nil) channel takes the default branch.
+// sendLogRecord never waits for queue capacity or I/O. The short read lock
+// ensures Stop cannot finish draining while a producer still holds the old queue.
 func (l *Logger) sendLogRecord(record logRecord) {
+	l.sendMu.RLock()
+	defer l.sendMu.RUnlock()
 	if l.state.LoggerDisabled.Load() {
 		l.handleFailedSend()
 		return
@@ -54,7 +57,7 @@ func (l *Logger) emit(ctx Context, flags, level, depth int64, args []any) {
 		TimeStamp: time.Now(),
 		Level:     level,
 		Trace:     trace,
-		Args:      args,
+		Args:      slices.Clone(args),
 	})
 }
 
@@ -75,43 +78,3 @@ func (l *Logger) internalLog(format string, args ...any) {
 	}
 	fmt.Fprintf(os.Stderr, format, args...)
 }
-
-// // log handles the core logging logic
-// func (l *Logger) log(flags int64, level int64, depth int64, args ...any) {
-// 	// State checks
-// 	if !l.state.IsInitialized.Load() {
-// 		return
-// 	}
-//
-// 	if !l.state.Started.Load() {
-// 		// Log to internal error channel if configured
-// 		cfg := l.getConfig()
-// 		if cfg.InternalErrorsToStderr {
-// 			l.internalLog("warning - logger not started, dropping log entry\n")
-// 		}
-// 		return
-// 	}
-//
-// 	// Discard or proceed based on level
-// 	cfg := l.getConfig()
-// 	if level < cfg.Level {
-// 		return
-// 	}
-//
-// 	// Get trace info from runtime
-// 	// Depth filter hard-coded based on call stack of current package design
-// 	var trace string
-// 	if depth > 0 {
-// 		const skipTrace = 3 // log.Info -> log -> getTrace (Adjust if call stack changes)
-// 		trace = getTrace(depth, skipTrace)
-// 	}
-//
-// 	record := logRecord{
-// 		Flags:     flags,
-// 		TimeStamp: time.Now(),
-// 		Level:     level,
-// 		Trace:     trace,
-// 		Args:      args,
-// 	}
-// 	l.sendLogRecord(record)
-// }

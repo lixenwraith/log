@@ -97,7 +97,7 @@ func (b *Builder) BuildFastHTTP(opts ...FastHTTPOption) (*FastHTTPAdapter, error
 	return NewFastHTTPAdapter(l, opts...), nil
 }
 
-// BuildFiber creates a Fiber v2.54.x adapter
+// BuildFiber creates a Fiber v2 adapter
 func (b *Builder) BuildFiber(opts ...FiberOption) (*FiberAdapter, error) {
 	l, err := b.getLogger()
 	if err != nil {
@@ -112,57 +112,6 @@ func (b *Builder) GetLogger() (*log.Logger, error) {
 	return b.getLogger()
 }
 
-// --- Example Usage ---
-//
-// The following demonstrates how to integrate lixenwraith/log with gnet, fasthttp, and Fiber
-// using a single, shared logger instance
-//
-//	// 1. Create and configure application's main logger
-//	appLogger := log.NewLogger()
-//	logCfg := log.DefaultConfig()
-//	logCfg.Level = log.LevelDebug
-//	if err := appLogger.ApplyConfig(logCfg); err != nil {
-//		panic(fmt.Sprintf("failed to configure logger: %v", err))
-//	}
-//
-//	// 2. Create a builder and provide the existing logger
-//	builder := compat.NewBuilder().WithLogger(appLogger)
-//
-//	// 3. Build the required adapters
-//	gnetLogger, err := builder.BuildGnet()
-//	if err != nil { /* handle error */ }
-//
-//	fasthttpLogger, err := builder.BuildFastHTTP()
-//	if err != nil { /* handle error */ }
-//
-//	fiberLogger, err := builder.BuildFiber()
-//	if err != nil { /* handle error */ }
-//
-//	// 4. Configure your servers with the adapters
-//
-//	// For gnet:
-//	var events gnet.EventHandler // your-event-handler
-//	// The adapter is passed directly into the gnet options
-//	go gnet.Run(events, "tcp://:9000", gnet.WithLogger(gnetLogger))
-//
-//	// For fasthttp:
-//	// The adapter is assigned directly to the server's Logger field
-//	server := &fasthttp.Server{
-//		Handler: func(ctx *fasthttp.RequestCtx) {
-//			ctx.WriteString("Hello, world!")
-//		},
-//		Logger: fasthttpLogger,
-//	}
-//	go server.ListenAndServe(":8080")
-//
-//	// For Fiber v2.54.x:
-//	// The adapter is passed to fiber.New() via the config
-//	app := fiber.New(fiber.Config{
-//		AppName: "My Application",
-//	})
-//	app.UpdateConfig(fiber.Config{
-//		AppName: "My Application",
-//	})
-//	// Note: Set the logger after app creation if needed
-//	// fiber uses internal logging, adapter can be used in custom middleware
-//	go app.Listen(":3000")
+// Configure and Start the shared Logger before building adapters. WithConfig
+// initializes a new Logger but does not Start it; use GetLogger for lifecycle
+// control. See doc/adapters.md for framework integration examples.

@@ -9,8 +9,12 @@ package sanitizer
 
 import (
 	"encoding/hex"
+	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
+	"reflect"
 	"strconv"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -20,7 +24,7 @@ const (
 	FilterNonPrintable uint64 = 1 << iota // Matches runes not classified as printable by strconv.IsPrint
 	FilterControl                         // Matches control characters (unicode.IsControl)
 	FilterWhitespace                      // Matches whitespace characters (unicode.IsSpace)
-	FilterShellSpecial                    // Matches common shell metacharacters: '`', '$', ';', '|', '&', '>', '<', '(', ')', '#'
+	FilterShellSpecial                    // Matches shell metacharacters including quotes, backslash, globs, and: '`', '$', ';', '|', '&', '>', '<', '(', ')', '#'
 )
 
 // Transform flags for character transformation
@@ -38,7 +42,7 @@ const (
 	PolicyJSON PolicyPreset = "json" // Policy for sanitizing strings to be embedded in JSON
 	PolicyTxt  PolicyPreset = "txt"  // Policy for sanitizing text written to log files
 	// PolicyShell strips shell metacharacters, whitespace, and control characters. NOT sufficient for safe shell construction. Pass arguments via exec argv instead.
-	PolicyShell PolicyPreset = "shell" // Policy for sanitizing arguments passed to shell commands
+	PolicyShell PolicyPreset = "shell" // Lossy text filter; not shell quoting
 )
 
 // rule represents a single sanitization rule
@@ -62,25 +66,8 @@ var policyRules = map[PolicyPreset][]rule{
 		{fn: func(r rune) bool { return r == '<' }, transform: TransformHexEncode},
 		{filter: FilterNonPrintable, transform: TransformHexEncode},
 	},
-	// PolicyTxt:   {{filter: FilterNonPrintable, transform: TransformHexEncode}},
 	PolicyJSON:  {{filter: FilterControl, transform: TransformJSONEscape}},
 	PolicyShell: {{filter: FilterShellSpecial | FilterWhitespace | FilterControl, transform: TransformStrip}},
-}
-
-// filterCheckers maps individual filter flags to their check functions
-var filterCheckers = map[uint64]func(rune) bool{
-	FilterNonPrintable: func(r rune) bool { return !strconv.IsPrint(r) },
-	FilterControl:      unicode.IsControl,
-	FilterWhitespace:   unicode.IsSpace,
-	FilterShellSpecial: func(r rune) bool {
-		switch r {
-		// CHANGED: D2 — added quotes, backslash, glob, braces, '~', '!'
-		case '`', '$', ';', '|', '&', '>', '<', '(', ')', '#',
-			'\'', '"', '\\', '*', '?', '[', ']', '{', '}', '~', '!':
-			return true
-		}
-		return false
-	},
 }
 
 // Sanitizer provides chainable text sanitization
@@ -122,6 +109,7 @@ func (s *Sanitizer) Sanitize(data string) string {
 	if len(s.rules) == 0 {
 		return data
 	}
+	data = normalizeUTF8(data)
 	i := s.firstMatch(data)
 	if i < 0 {
 		return data
@@ -137,7 +125,16 @@ func (s *Sanitizer) AppendSanitize(dst []byte, data string) []byte {
 	if len(s.rules) == 0 {
 		return append(dst, data...)
 	}
-	return s.appendSanitized(dst, data)
+	return s.appendSanitized(dst, normalizeUTF8(data))
+}
+
+// Repair malformed sequences before removing characters: otherwise deleting
+// separators can join invalid bytes into a new control rune or metacharacter.
+func normalizeUTF8(data string) string {
+	if utf8.ValidString(data) {
+		return data
+	}
+	return strings.ToValidUTF8(data, "\ufffd")
 }
 
 // firstMatch returns the byte index of the first rune matching any rule, -1 if none
@@ -153,26 +150,36 @@ func (s *Sanitizer) firstMatch(data string) int {
 }
 
 func (s *Sanitizer) appendSanitized(dst []byte, data string) []byte {
-	for _, r := range data {
-		matched := false
+	start := 0
+	for i, r := range data {
 		for _, rl := range s.rules { // first match wins
 			if rl.matches(r) {
-				applyTransform(&dst, r, rl.transform)
-				matched = true
+				// A rule without a known transform is a passthrough rule.
+				if rl.transform&(TransformStrip|TransformHexEncode|TransformJSONEscape) != 0 {
+					dst = append(dst, data[start:i]...)
+					applyTransform(&dst, r, rl.transform)
+					_, size := utf8.DecodeRuneInString(data[i:])
+					start = i + size
+				}
 				break
 			}
 		}
-		if !matched {
-			dst = utf8.AppendRune(dst, r)
-		}
 	}
+	dst = append(dst, data[start:]...)
 	return dst
 }
 
 // matchesFilter checks if a rune matches any filter in the mask
 func matchesFilter(r rune, filterMask uint64) bool {
-	for flag, checker := range filterCheckers {
-		if (filterMask&flag) != 0 && checker(r) {
+	if filterMask&FilterNonPrintable != 0 && !strconv.IsPrint(r) ||
+		filterMask&FilterControl != 0 && unicode.IsControl(r) ||
+		filterMask&FilterWhitespace != 0 && unicode.IsSpace(r) {
+		return true
+	}
+	if filterMask&FilterShellSpecial != 0 {
+		switch r {
+		case '`', '$', ';', '|', '&', '>', '<', '(', ')', '#',
+			'\'', '"', '\\', '*', '?', '[', ']', '{', '}', '~', '!':
 			return true
 		}
 	}
@@ -189,7 +196,7 @@ func applyTransform(buf *[]byte, r rune, transformMask uint64) {
 		var runeBytes [utf8.UTFMax]byte
 		n := utf8.EncodeRune(runeBytes[:], r)
 		*buf = append(*buf, '<')
-		*buf = append(*buf, hex.EncodeToString(runeBytes[:n])...)
+		*buf = hex.AppendEncode(*buf, runeBytes[:n])
 		*buf = append(*buf, '>')
 
 	case (transformMask & TransformJSONEscape) != 0:
@@ -209,7 +216,7 @@ func applyTransform(buf *[]byte, r rune, transformMask uint64) {
 		case '\\':
 			*buf = append(*buf, '\\', '\\')
 		default:
-			if r < 0x20 || r == 0x7f {
+			if r < 0x20 || r >= 0x7f && r <= 0x9f {
 				*buf = append(*buf, fmt.Sprintf("\\u%04x", r)...)
 			} else {
 				*buf = utf8.AppendRune(*buf, r)
@@ -226,6 +233,12 @@ type Serializer struct {
 
 // NewSerializer creates a handler with format-specific behavior
 func NewSerializer(format string, san *Sanitizer) *Serializer {
+	if san == nil {
+		san = New()
+	}
+	if format != "raw" && format != "json" && format != "txt" {
+		format = "txt"
+	}
 	return &Serializer{
 		format:    format,
 		sanitizer: san,
@@ -256,50 +269,19 @@ func (se *Serializer) WriteString(buf *[]byte, s string) {
 		}
 
 	case "json":
-		// Sanitizer applied as content transform before escaping
-		s = se.sanitizer.Sanitize(s)
-		*buf = append(*buf, '"')
-		for i := 0; i < len(s); {
-			c := s[i]
-			// raw UTF-8 is valid in JSON strings. Only <0x20, '"', '\\', 0x7f are escaped.
-			if c >= 0x20 && c != '"' && c != '\\' && c != 0x7f {
-				start := i
-				for i < len(s) {
-					c = s[i]
-					if c >= 0x20 && c != '"' && c != '\\' && c != 0x7f {
-						i++
-					} else {
-						break
-					}
-				}
-				*buf = append(*buf, s[start:i]...)
-			} else {
-				switch c {
-				case '\\', '"':
-					*buf = append(*buf, '\\', c)
-				case '\n':
-					*buf = append(*buf, '\\', 'n')
-				case '\r':
-					*buf = append(*buf, '\\', 'r')
-				case '\t':
-					*buf = append(*buf, '\\', 't')
-				case '\b':
-					*buf = append(*buf, '\\', 'b')
-				case '\f':
-					*buf = append(*buf, '\\', 'f')
-				default:
-					*buf = append(*buf, fmt.Sprintf("\\u%04x", c)...)
-				}
-				i++
-			}
-		}
-		*buf = append(*buf, '"')
+		// AppendQuote always produces valid UTF-8 JSON. Its error only reports
+		// replacement of malformed UTF-8, which is intentional for log output.
+		*buf, _ = jsontext.AppendQuote(*buf, se.sanitizer.Sanitize(s))
 
 	}
 }
 
-// WriteNumber writes a number value
+// WriteNumber writes a number; invalid JSON numbers are represented as strings.
 func (se *Serializer) WriteNumber(buf *[]byte, n string) {
+	if se.format == "json" && (strings.TrimSpace(n) != n || len(n) == 0 || n[0] != '-' && (n[0] < '0' || n[0] > '9') || !json.Valid([]byte(n))) {
+		se.WriteString(buf, n)
+		return
+	}
 	*buf = append(*buf, n...)
 }
 
@@ -320,8 +302,88 @@ func (se *Serializer) WriteNil(buf *[]byte) {
 
 // WriteComplex writes complex types
 func (se *Serializer) WriteComplex(buf *[]byte, v any) {
+	// fmt recursively traverses maps and slices without cycle detection. Bound
+	// that traversal before calling it; scalar and Stringer paths are separate.
+	budget := 10000
+	if !boundedValue(reflect.ValueOf(v), 0, &budget) {
+		se.WriteString(buf, "<cyclic or oversized value>")
+		return
+	}
 	str := fmt.Sprintf("%+v", v)
 	se.WriteString(buf, str)
+}
+
+// boundedValue limits depth and total traversal work without allocating a
+// visited map. A cycle necessarily exceeds the depth bound. Application-defined
+// formatting/marshal methods remain responsible for their own termination.
+func boundedValue(v reflect.Value, depth int, budget *int) bool {
+	*budget -= 1
+	if depth > 64 || *budget < 0 {
+		return false
+	}
+	if !v.IsValid() {
+		return true
+	}
+	switch v.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		return v.IsNil() || boundedValue(v.Elem(), depth+1, budget)
+	case reflect.Map:
+		iter := v.MapRange()
+		for iter.Next() {
+			if !boundedValue(iter.Key(), depth+1, budget) || !boundedValue(iter.Value(), depth+1, budget) {
+				return false
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			if !boundedValue(v.Index(i), depth+1, budget) {
+				return false
+			}
+		}
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			if !boundedValue(v.Field(i), depth+1, budget) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// WriteJSON marshals v with encoding/json semantics, then applies the content
+// policy to every JSON string (including nested keys). On error buf is unchanged.
+func (se *Serializer) WriteJSON(buf *[]byte, v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	if len(se.sanitizer.rules) == 0 {
+		*buf = append(*buf, data...)
+		return nil
+	}
+	// Marshal has already validated the JSON. Only string tokens need rewriting;
+	// copying the other bytes preserves numbers, booleans, and container shapes.
+	start := 0
+	for i := 0; i < len(data); i++ {
+		if data[i] != '"' {
+			continue
+		}
+		*buf = append(*buf, data[start:i]...)
+		end := i + 1
+		for data[end] != '"' {
+			if data[end] == '\\' {
+				end++
+			}
+			end++
+		}
+		var value string
+		_ = json.Unmarshal(data[i:end+1], &value)
+		quoted := Serializer{format: "json", sanitizer: se.sanitizer}
+		quoted.WriteString(buf, value)
+		i, start = end, end+1
+	}
+	*buf = append(*buf, data[start:]...)
+	return nil
 }
 
 // NeedsQuotes determines if quoting is needed

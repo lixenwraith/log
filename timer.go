@@ -20,6 +20,7 @@ func (l *Logger) setupProcessingTimers() *TimerSet {
 
 	// Set up disk check timer
 	timers.diskCheckTicker = l.setupDiskCheckTimer()
+	timers.diskInterval = time.Duration(max(c.MinCheckIntervalMs, min(c.DiskCheckIntervalMs, c.MaxCheckIntervalMs))) * time.Millisecond
 
 	// Set up heartbeat timer
 	timers.heartbeatChan = l.setupHeartbeatTimer(timers)
@@ -35,7 +36,7 @@ func (l *Logger) setupRetentionTimer(timers *TimerSet) <-chan time.Time {
 	retentionDur := time.Duration(retentionPeriodHrs * float64(time.Hour))
 	retentionCheckInterval := time.Duration(retentionCheckMins * float64(time.Minute))
 
-	if retentionDur > 0 && retentionCheckInterval > 0 {
+	if c.EnableFile && retentionDur > 0 && retentionCheckInterval > 0 {
 		timers.retentionTicker = time.NewTicker(retentionCheckInterval)
 		l.updateEarliestFileTime() // Initial check
 		return timers.retentionTicker.C

@@ -17,31 +17,28 @@ logger := log.NewLogger()
 Direct struct configuration using the Config struct, or key-value overrides:
 
 ```go
-logger := log.NewLogger() // logger instance created with DefaultConfig (using default values)
-
-// Note: with default config, logs only go to stderr (file output disabled by default)
-logger.Start()  // Required before logging
-logger.Info("info raw log record written to stderr")
-
-// Directly change config struct
-cfg := log.GetConfig()
+logger := log.NewLogger()
+cfg := log.DefaultConfig()
 cfg.Level = log.LevelDebug
 cfg.Name = "myapp"
 cfg.Directory = "/var/log/myapp"
+cfg.EnableFile = true
 cfg.Format = "json"
 cfg.MaxSizeKB = 100
-err := logger.ApplyConfig(cfg)
+if err := logger.ApplyConfig(cfg); err != nil { return err }
+if err := logger.Start(); err != nil { return err }
+defer logger.Shutdown()
+logger.Info("application started")
 
-logger.Info("info json log record written to /var/log/myapp/myapp.log")
-
-// Override values with key-value string
-err = logger.ApplyConfigString(
-    "directory=/var/log/",
-	"extension=txt"
-    "format=txt")
-
-logger.Info("info txt log record written to /var/log/myapp.txt")
+// Apply overrides to the current configuration atomically.
+if err := logger.ApplyConfigString("extension=txt", "format=txt"); err != nil {
+    return err
+}
 ```
+
+`ApplyConfig` copies the supplied configuration. The caller may reuse or modify it after the call returns. Failed validation, directory creation, or file opening leaves the active configuration unchanged. Changes requiring a restart drain accepted records using the old file and configuration before publishing the replacement. Calls made while emission is stopped are ignored; a full queue drops records.
+
+Names and extensions must be filename components, without path separators or NUL. The queue size must be between 1 and 1,048,576 records. Numeric settings are checked for byte-count and duration overflow; positive fractional retention settings must resolve to at least one nanosecond. Size settings use decimal units: 1 KB = 1,000 bytes and 1 MB = 1,000 KB.
 
 ## Configuration Parameters
 
@@ -49,7 +46,7 @@ logger.Info("info txt log record written to /var/log/myapp.txt")
 
 | Parameter | Type | Description | Default    |
 |-----------|------|-------------|------------|
-| `level` | `int64` | Minimum log level (-4=Debug, 0=Info, 4=Warn, 8=Error) | `0` |
+| `level` | `int64` | Minimum log level (-8=Trace, -4=Debug, 0=Info, 4=Warn, 8=Error) | `0` |
 | `name` | `string` | Base name for log files | `"log"`    |
 | `extension` | `string` | Log file extension (without dot) | `"log"` |
 | `directory` | `string` | Directory to store log files | `"./log"` |
@@ -66,7 +63,7 @@ logger.Info("info txt log record written to /var/log/myapp.txt")
 | `show_level`     | `bool` | Include log level in entries                         | `true`     |
 | `enable_console` | `bool` | Enable console output (stdout/stderr)                | `true`     |
 | `console_target` | `string` | Console target: `"stdout"`, `"stderr"`, or `"split"` | `"stderr"` |
-| `enable_file`    | `bool` | Enable file output (console-only)                    | `false`    |
+| `enable_file`    | `bool` | Enable file output                    | `false`    |
 
 **Note:** When `console_target="split"`, INFO/DEBUG logs go to stdout while WARN/ERROR logs go to stderr.
 

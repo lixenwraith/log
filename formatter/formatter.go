@@ -15,8 +15,9 @@
 package formatter
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 	"unicode/utf8"
@@ -50,9 +51,10 @@ type Formatter struct {
 
 	// Serializers are stateless and format-fixed; built once to keep the
 	// per-record path allocation-free
-	serTxt  *sanitizer.Serializer
-	serJSON *sanitizer.Serializer
-	serRaw  *sanitizer.Serializer
+	serTxt   *sanitizer.Serializer
+	serJSON  *sanitizer.Serializer
+	serRaw   *sanitizer.Serializer
+	serPlain *sanitizer.Serializer
 }
 
 // ContextSlots is the number of correlation values a Context carries
@@ -66,7 +68,8 @@ type Context struct {
 }
 
 // ContextKeys names the record keys for Context fields; empty names are omitted.
-// Names are emitted verbatim and must be plain identifiers.
+// Names are escaped for the output format. Use distinct names that do not
+// collide with built-in time, level, trace, message, or fields keys.
 type ContextKeys struct {
 	Tag  string
 	Vals [ContextSlots]string
@@ -90,6 +93,7 @@ func New(s ...*sanitizer.Sanitizer) *Formatter {
 		serTxt:          sanitizer.NewSerializer("txt", san),
 		serJSON:         sanitizer.NewSerializer("json", san),
 		serRaw:          sanitizer.NewSerializer("raw", san),
+		serPlain:        sanitizer.NewSerializer("raw", sanitizer.New()),
 	}
 }
 
@@ -198,16 +202,22 @@ func (f *Formatter) AppendFormatWithOptionsCtx(dst []byte, format string, ctx Co
 			case []byte:
 				dst = append(dst, v...)
 			case fmt.Stringer:
-				dst = append(dst, v.String()...)
+				dst = fmt.Append(dst, v)
 			case error:
-				dst = append(dst, v.Error()...)
+				dst = fmt.Append(dst, v)
 			default:
-				dst = append(dst, fmt.Sprint(v)...)
+				f.serPlain.WriteComplex(&dst, v)
 			}
 		}
 		return dst
 	}
 
+	if flags&FlagNoTimestamp != 0 {
+		flags &^= FlagShowTimestamp
+	}
+	if flags&FlagNoLevel != 0 {
+		flags &^= FlagShowLevel
+	}
 	format = normalizeFormat(format)
 	serializer := f.serializerFor(format)
 
@@ -271,10 +281,7 @@ func (f *Formatter) AppendArgs(dst []byte, args ...any) []byte {
 	return dst
 }
 
-// appendValue provides unified type conversion (was convertValue; now
-// value-return style over caller buffer). Type switch body unchanged except
-// buffer plumbing — replace every `serializer.WriteX(buf, ...)` with
-// `serializer.WriteX(&dst, ...)` and `return dst`.
+// appendValue converts one value using the selected serializer.
 func (f *Formatter) appendValue(dst []byte, v any, serializer *sanitizer.Serializer, needsSpace bool) []byte {
 	if needsSpace && len(dst) > 0 {
 		dst = append(dst, ' ')
@@ -289,17 +296,29 @@ func (f *Formatter) appendValue(dst []byte, v any, serializer *sanitizer.Seriali
 		n := utf8.EncodeRune(runeStr[:], val)
 		serializer.WriteString(&dst, string(runeStr[:n]))
 	case int:
-		serializer.WriteNumber(&dst, string(strconv.AppendInt(nil, int64(val), 10)))
+		dst = strconv.AppendInt(dst, int64(val), 10)
+	case int8:
+		dst = strconv.AppendInt(dst, int64(val), 10)
+	case int16:
+		dst = strconv.AppendInt(dst, int64(val), 10)
 	case int64:
-		serializer.WriteNumber(&dst, string(strconv.AppendInt(nil, val, 10)))
+		dst = strconv.AppendInt(dst, val, 10)
 	case uint:
-		serializer.WriteNumber(&dst, string(strconv.AppendUint(nil, uint64(val), 10)))
+		dst = strconv.AppendUint(dst, uint64(val), 10)
+	case uint8:
+		dst = strconv.AppendUint(dst, uint64(val), 10)
+	case uint16:
+		dst = strconv.AppendUint(dst, uint64(val), 10)
+	case uint32:
+		dst = strconv.AppendUint(dst, uint64(val), 10)
+	case uintptr:
+		dst = strconv.AppendUint(dst, uint64(val), 10)
 	case uint64:
-		serializer.WriteNumber(&dst, string(strconv.AppendUint(nil, val, 10)))
+		dst = strconv.AppendUint(dst, val, 10)
 	case float32:
-		serializer.WriteNumber(&dst, string(strconv.AppendFloat(nil, float64(val), 'f', -1, 32)))
+		dst = appendFloat(dst, float64(val), 32, serializer)
 	case float64:
-		serializer.WriteNumber(&dst, string(strconv.AppendFloat(nil, val, 'f', -1, 64)))
+		dst = appendFloat(dst, val, 64, serializer)
 	case bool:
 		serializer.WriteBool(&dst, val)
 	case nil:
@@ -307,13 +326,23 @@ func (f *Formatter) appendValue(dst []byte, v any, serializer *sanitizer.Seriali
 	case time.Time:
 		serializer.WriteString(&dst, val.Format(f.timestampFormat))
 	case error:
-		serializer.WriteString(&dst, val.Error())
+		serializer.WriteString(&dst, fmt.Sprint(val))
 	case fmt.Stringer:
-		serializer.WriteString(&dst, val.String())
+		serializer.WriteString(&dst, fmt.Sprint(val))
 	default:
 		serializer.WriteComplex(&dst, val)
 	}
 	return dst
+}
+
+// Non-finite floats have no JSON number representation. Keep their spelling
+// as a string so a single bad measurement cannot corrupt the record.
+func appendFloat(dst []byte, value float64, bits int, serializer *sanitizer.Serializer) []byte {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		serializer.WriteString(&dst, strconv.FormatFloat(value, 'f', -1, bits))
+		return dst
+	}
+	return strconv.AppendFloat(dst, value, 'f', -1, bits)
 }
 
 // LevelToString converts integer level values to string
@@ -342,10 +371,8 @@ func LevelToString(level int64) string {
 
 // appendJSONKey writes a quoted literal key followed by ':'
 func appendJSONKey(dst []byte, key string) []byte {
-	dst = append(dst, '"')
-	dst = append(dst, key...)
-	dst = append(dst, '"', ':')
-	return dst
+	dst, _ = jsontext.AppendQuote(dst, key)
+	return append(dst, ':')
 }
 
 // isKV reports whether args form an even-length list with string keys
@@ -367,9 +394,9 @@ func (f *Formatter) appendJSON(dst []byte, ctx Context, flags int64, timestamp t
 	needsComma := false
 
 	if flags&FlagShowTimestamp != 0 {
-		dst = append(dst, `"time":"`...)
-		dst = timestamp.AppendFormat(dst, f.timestampFormat)
-		dst = append(dst, '"')
+		dst = append(dst, `"time":`...)
+		var stamp [128]byte
+		serializer.WriteString(&dst, string(timestamp.AppendFormat(stamp[:0], f.timestampFormat)))
 		needsComma = true
 	}
 
@@ -425,13 +452,10 @@ func (f *Formatter) appendJSON(dst []byte, ctx Context, flags int64, timestamp t
 
 				dst = append(dst, `,"fields":`...)
 
-				marshaledFields, err := json.Marshal(fields)
-				if err != nil {
-					dst = append(dst, `{"_marshal_error":"`...)
+				if err := serializer.WriteJSON(&dst, fields); err != nil {
+					dst = append(dst, `{"_marshal_error":`...)
 					serializer.WriteString(&dst, err.Error())
-					dst = append(dst, `"}`...)
-				} else {
-					dst = append(dst, marshaledFields...)
+					dst = append(dst, '}')
 				}
 
 				dst = append(dst, '}', '\n')
@@ -477,7 +501,8 @@ func (f *Formatter) appendTxt(dst []byte, ctx Context, flags int64, timestamp ti
 	needsSpace := false
 
 	if flags&FlagShowTimestamp != 0 {
-		dst = timestamp.AppendFormat(dst, f.timestampFormat)
+		var stamp [128]byte
+		dst = f.sanitizer.AppendSanitize(dst, string(timestamp.AppendFormat(stamp[:0], f.timestampFormat)))
 		needsSpace = true
 	}
 
@@ -493,7 +518,7 @@ func (f *Formatter) appendTxt(dst []byte, ctx Context, flags int64, timestamp ti
 		if needsSpace {
 			dst = append(dst, ' ')
 		}
-		dst = append(dst, f.ctxKeys.Tag...)
+		serializer.WriteString(&dst, f.ctxKeys.Tag)
 		dst = append(dst, '=')
 		dst = f.appendValue(dst, ctx.Tag, serializer, false)
 		needsSpace = true
@@ -505,7 +530,7 @@ func (f *Formatter) appendTxt(dst []byte, ctx Context, flags int64, timestamp ti
 		if needsSpace {
 			dst = append(dst, ' ')
 		}
-		dst = append(dst, key...)
+		serializer.WriteString(&dst, key)
 		dst = append(dst, '=')
 		dst = strconv.AppendUint(dst, ctx.Vals[i], 10)
 		needsSpace = true
@@ -515,15 +540,7 @@ func (f *Formatter) appendTxt(dst []byte, ctx Context, flags int64, timestamp ti
 		if needsSpace {
 			dst = append(dst, ' ')
 		}
-		// Sanitize trace to prevent terminal control sequence injection
-		tempBuf := make([]byte, 0, len(trace)*2)
-		f.serTxt.WriteString(&tempBuf, trace)
-		// Extract content without quotes if added by txt serializer
-		if len(tempBuf) > 2 && tempBuf[0] == '"' && tempBuf[len(tempBuf)-1] == '"' {
-			dst = append(dst, tempBuf[1:len(tempBuf)-1]...)
-		} else {
-			dst = append(dst, tempBuf...)
-		}
+		dst = f.sanitizer.AppendSanitize(dst, trace)
 		needsSpace = true
 	}
 
@@ -532,7 +549,7 @@ func (f *Formatter) appendTxt(dst []byte, ctx Context, flags int64, timestamp ti
 			if needsSpace {
 				dst = append(dst, ' ')
 			}
-			dst = append(dst, args[i].(string)...)
+			serializer.WriteString(&dst, args[i].(string))
 			dst = append(dst, '=')
 			dst = f.appendValue(dst, args[i+1], serializer, false)
 			needsSpace = true

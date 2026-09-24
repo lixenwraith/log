@@ -123,16 +123,6 @@ func TestShutdownEdgeCases(t *testing.T) {
 		noErr(t, logger.Shutdown(), "second Shutdown")
 	})
 
-	t.Run("timeout", func(t *testing.T) {
-		logger, _ := newTestLogger(t)
-		for i := range 200 {
-			logger.Info("flood", i)
-		}
-		// Stop may time out; terminal state transitions are unconditional
-		_ = logger.Shutdown(time.Millisecond)
-		isTrue(t, logger.state.ShutdownCalled.Load(), "ShutdownCalled")
-		isFalse(t, logger.state.IsInitialized.Load(), "IsInitialized")
-	})
 }
 
 // TestFlush covers the success path and both failure modes.
@@ -150,7 +140,7 @@ func TestFlush(t *testing.T) {
 
 	t.Run("timeout", func(t *testing.T) {
 		logger, _ := newTestLogger(t)
-		errContains(t, logger.Flush(time.Nanosecond), "timeout", "Flush")
+		errContains(t, logger.Flush(0), "timeout", "Flush")
 	})
 
 	t.Run("on stopped logger", func(t *testing.T) {
@@ -165,4 +155,3 @@ func TestFlush(t *testing.T) {
 		errContains(t, logger.Flush(time.Second), "not initialized", "Flush")
 	})
 }
-

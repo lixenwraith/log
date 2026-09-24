@@ -18,7 +18,7 @@ func BenchmarkLoggerInfo(b *testing.B) {
 	}
 }
 
-// BenchmarkLoggerTxt measures the txt path, which includes quote analysis.
+// BenchmarkLoggerTxt measures enqueueing with txt output selected.
 func BenchmarkLoggerTxt(b *testing.B) {
 	logger, _ := newTestLogger(b)
 
@@ -46,7 +46,7 @@ func BenchmarkLoggerJSON(b *testing.B) {
 	}
 }
 
-// BenchmarkLoggerStructured measures the json.Marshal path for field maps.
+// BenchmarkLoggerStructured measures enqueueing and snapshotting structured maps.
 func BenchmarkLoggerStructured(b *testing.B) {
 	logger, _ := newTestLogger(b)
 
@@ -66,8 +66,8 @@ func BenchmarkLoggerStructured(b *testing.B) {
 	}
 }
 
-// BenchmarkLoggerSanitized measures PolicyTxt overhead on control-free input,
-// where the sanitizer takes its no-allocation fast path.
+// BenchmarkLoggerSanitized measures enqueueing with PolicyTxt selected;
+// sanitizer CPU work runs asynchronously and is benchmarked in its own package.
 func BenchmarkLoggerSanitized(b *testing.B) {
 	logger, _ := newTestLogger(b)
 

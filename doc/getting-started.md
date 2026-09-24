@@ -4,7 +4,7 @@ This guide will help you get started with the lixenwraith/log package, from inst
 
 ## Installation
 
-Install the logger package:
+Requires Go 1.27.1 or later. Install the logger package:
 
 ```bash
 go get github.com/lixenwraith/log
@@ -74,7 +74,7 @@ func main() {
         Directory("/var/log/myapp").       // Log directory path
         LevelString("info").               // Minimum log level
         Format("json").                    // Output format
-        Sanitization("json").              // Sanitization policy
+        Sanitization(log.PolicyRaw).              // Sanitization policy
         EnableFile(true).                  // Enable file output (disabled by default)
         BufferSize(2048).                  // Channel buffer size
         MaxSizeMB(10).                     // Max file size before rotation
@@ -102,8 +102,8 @@ func main() {
 ## Next Steps
 
 1. **[Learn about configuration options](configuration.md)** - Customize behavior for your needs
-2. **[Explore the API](api-reference.md)** - See all available methods
-3. **[Logging patterns and examples](logging-guide.md)** - Write better logs
+2. **[Explore the API](api.md)** - See all available methods
+3. **[Logging patterns and examples](logging.md)** - Write better logs
 
 ## Common Patterns
 
@@ -125,7 +125,10 @@ func NewService() (*Service, error) {
         return nil, fmt.Errorf("logger init failed: %w", err)
     }
 	
-    logger.Start()
+    if err := logger.Start(); err != nil {
+        _ = logger.Shutdown()
+        return nil, err
+    }
     
     return &Service{
         logger: logger,

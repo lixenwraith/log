@@ -9,7 +9,7 @@ import (
 )
 
 // FiberAdapter wraps lixenwraith/log.Logger to implement Fiber's CommonLogger interface
-// This provides compatibility with Fiber v2.54.x logging requirements
+// This provides compatibility with Fiber v2 logging methods
 type FiberAdapter struct {
 	logger       *log.Logger
 	fatalHandler func(msg string) // Customizable fatal behavior
@@ -62,24 +62,36 @@ func (a *FiberAdapter) Trace(v ...any) {
 
 // Debug logs at debug level
 func (a *FiberAdapter) Debug(v ...any) {
+	if !a.logger.Enabled(log.LevelDebug) {
+		return
+	}
 	msg := fmt.Sprint(v...)
 	a.logger.Debug("msg", msg, "source", "fiber")
 }
 
 // Info logs at info level
 func (a *FiberAdapter) Info(v ...any) {
+	if !a.logger.Enabled(log.LevelInfo) {
+		return
+	}
 	msg := fmt.Sprint(v...)
 	a.logger.Info("msg", msg, "source", "fiber")
 }
 
 // Warn logs at warn level
 func (a *FiberAdapter) Warn(v ...any) {
+	if !a.logger.Enabled(log.LevelWarn) {
+		return
+	}
 	msg := fmt.Sprint(v...)
 	a.logger.Warn("msg", msg, "source", "fiber")
 }
 
 // Error logs at error level
 func (a *FiberAdapter) Error(v ...any) {
+	if !a.logger.Enabled(log.LevelError) {
+		return
+	}
 	msg := fmt.Sprint(v...)
 	a.logger.Error("msg", msg, "source", "fiber")
 }
@@ -132,24 +144,36 @@ func (a *FiberAdapter) Tracef(format string, v ...any) {
 
 // Debugf logs at debug level with printf-style formatting
 func (a *FiberAdapter) Debugf(format string, v ...any) {
+	if !a.logger.Enabled(log.LevelDebug) {
+		return
+	}
 	msg := fmt.Sprintf(format, v...)
 	a.logger.Debug("msg", msg, "source", "fiber")
 }
 
 // Infof logs at info level with printf-style formatting
 func (a *FiberAdapter) Infof(format string, v ...any) {
+	if !a.logger.Enabled(log.LevelInfo) {
+		return
+	}
 	msg := fmt.Sprintf(format, v...)
 	a.logger.Info("msg", msg, "source", "fiber")
 }
 
 // Warnf logs at warn level with printf-style formatting
 func (a *FiberAdapter) Warnf(format string, v ...any) {
+	if !a.logger.Enabled(log.LevelWarn) {
+		return
+	}
 	msg := fmt.Sprintf(format, v...)
 	a.logger.Warn("msg", msg, "source", "fiber")
 }
 
 // Errorf logs at error level with printf-style formatting
 func (a *FiberAdapter) Errorf(format string, v ...any) {
+	if !a.logger.Enabled(log.LevelError) {
+		return
+	}
 	msg := fmt.Sprintf(format, v...)
 	a.logger.Error("msg", msg, "source", "fiber")
 }
@@ -192,6 +216,9 @@ func (a *FiberAdapter) Tracew(msg string, keysAndValues ...any) {
 
 // Debugw logs at debug level with structured key-value pairs
 func (a *FiberAdapter) Debugw(msg string, keysAndValues ...any) {
+	if !a.logger.Enabled(log.LevelDebug) {
+		return
+	}
 	fields := make([]any, 0, len(keysAndValues)+4)
 	fields = append(fields, "msg", msg, "source", "fiber")
 	fields = append(fields, keysAndValues...)
@@ -200,6 +227,9 @@ func (a *FiberAdapter) Debugw(msg string, keysAndValues ...any) {
 
 // Infow logs at info level with structured key-value pairs
 func (a *FiberAdapter) Infow(msg string, keysAndValues ...any) {
+	if !a.logger.Enabled(log.LevelInfo) {
+		return
+	}
 	fields := make([]any, 0, len(keysAndValues)+4)
 	fields = append(fields, "msg", msg, "source", "fiber")
 	fields = append(fields, keysAndValues...)
@@ -208,6 +238,9 @@ func (a *FiberAdapter) Infow(msg string, keysAndValues ...any) {
 
 // Warnw logs at warn level with structured key-value pairs
 func (a *FiberAdapter) Warnw(msg string, keysAndValues ...any) {
+	if !a.logger.Enabled(log.LevelWarn) {
+		return
+	}
 	fields := make([]any, 0, len(keysAndValues)+4)
 	fields = append(fields, "msg", msg, "source", "fiber")
 	fields = append(fields, keysAndValues...)
@@ -216,6 +249,9 @@ func (a *FiberAdapter) Warnw(msg string, keysAndValues ...any) {
 
 // Errorw logs at error level with structured key-value pairs
 func (a *FiberAdapter) Errorw(msg string, keysAndValues ...any) {
+	if !a.logger.Enabled(log.LevelError) {
+		return
+	}
 	fields := make([]any, 0, len(keysAndValues)+4)
 	fields = append(fields, "msg", msg, "source", "fiber")
 	fields = append(fields, keysAndValues...)

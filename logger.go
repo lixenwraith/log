@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"sync"
@@ -22,7 +23,9 @@ type Logger struct {
 	spawner       atomic.Pointer[func(func())]
 	errHandler    atomic.Pointer[func(string)]
 	state         State
-	initMu        sync.Mutex
+	initMu        sync.Mutex   // serializes lifecycle and configuration changes
+	sendMu        sync.RWMutex // joins enqueues before detaching a processor
+	processorErr  error        // written by processor, read only after ProcDone closes
 }
 
 // levelOff closes the emit gate without touching configuration
@@ -41,14 +44,6 @@ func NewLogger() *Logger {
 	l.state.Level.Store(levelOff)
 	l.state.Flags.Store(flagsFromConfig(defaultCfg))
 	l.state.TraceDepth.Store(defaultCfg.TraceDepth)
-
-	// // Initialize default formatter to prevent nil access
-	// defaultFormatter := formatter.New(sanitizer.New()).
-	// 	Type(defaultCfg.Format).
-	// 	TimestampFormat(defaultCfg.TimestampFormat).
-	// 	ShowLevel(defaultCfg.ShowLevel).
-	// 	ShowTimestamp(defaultCfg.ShowTimestamp)
-	// l.formatter.Store(defaultFormatter)
 
 	// Initialize the state
 	l.state.IsInitialized.Store(false)
@@ -69,14 +64,6 @@ func NewLogger() *Logger {
 
 	// Typed nil: a non-blocking send on a nil channel always takes default
 	l.state.ActiveLogChannel.Store((chan logRecord)(nil))
-	l.state.flushRequestChan = make(chan chan struct{}, 1)
-
-	// // Create a closed channel initially to prevent nil pointer issues
-	// initialChan := make(chan logRecord)
-	// close(initialChan)
-	// l.state.ActiveLogChannel.Store(initialChan)
-	//
-	// l.state.flushRequestChan = make(chan chan struct{}, 1)
 
 	return l
 }
@@ -88,6 +75,7 @@ func (l *Logger) ApplyConfig(cfg *Config) error {
 		return fmt.Errorf("log: configuration cannot be nil")
 	}
 
+	cfg = cfg.Clone()
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("log: invalid configuration: %w", err)
 	}
@@ -101,6 +89,8 @@ func (l *Logger) ApplyConfig(cfg *Config) error {
 // ApplyConfigString applies string key-value overrides to the logger's current configuration
 // Each override should be in the format "key=value"
 func (l *Logger) ApplyConfigString(overrides ...string) error {
+	l.initMu.Lock()
+	defer l.initMu.Unlock()
 	cfg := l.getConfig().Clone()
 
 	var errors []error
@@ -121,7 +111,10 @@ func (l *Logger) ApplyConfigString(overrides ...string) error {
 		return combineConfigErrors(errors)
 	}
 
-	return l.ApplyConfig(cfg)
+	if err := cfg.Validate(); err != nil {
+		return fmtErrorf("invalid configuration: %w", err)
+	}
+	return l.applyConfig(cfg)
 }
 
 // GetConfig returns a copy of current configuration
@@ -137,280 +130,239 @@ func (l *Logger) getConfig() *Config {
 // applyConfig is the internal implementation for applying configuration, assuming initMu is held
 func (l *Logger) applyConfig(cfg *Config) error {
 	oldCfg := l.getConfig()
-	l.currentConfig.Store(cfg)
+	wasStarted := l.state.Started.Load()
+	needsRestart := wasStarted && configRequiresRestart(oldCfg, cfg)
 
-	// Shared formatter and sanitizer constructor with SetContextKeys
-	l.rebuildFormatter(cfg)
+	// A timed-out processor still owns its file and formatter. Do not replace
+	// either resource until it has actually exited.
+	if !wasStarted && !l.state.ProcessorExited.Load() {
+		return fmtErrorf("previous processor is still stopping")
+	}
 
-	// Emit fast-path mirrors
-	l.state.Flags.Store(flagsFromConfig(cfg))
-	l.state.TraceDepth.Store(cfg.TraceDepth)
-
-	// Ensure log directory exists if file output is enabled
+	currentFile, _ := l.state.CurrentFile.Load().(*os.File)
+	needsNewFile := cfg.EnableFile && (!l.state.IsInitialized.Load() || !oldCfg.EnableFile ||
+		!wasStarted && currentFile == nil || l.state.LoggerDisabled.Load() ||
+		oldCfg.Directory != cfg.Directory || oldCfg.Name != cfg.Name || oldCfg.Extension != cfg.Extension)
+	var newFile *os.File
 	if cfg.EnableFile {
 		if err := os.MkdirAll(cfg.Directory, 0755); err != nil {
-			l.state.LoggerDisabled.Store(true)
-			l.currentConfig.Store(oldCfg) // Rollback
-			l.refreshLevelGate()
 			return fmtErrorf("failed to create log directory '%s': %w", cfg.Directory, err)
+		}
+		if needsNewFile {
+			var err error
+			newFile, err = openLogFile(cfg)
+			if err != nil {
+				return fmtErrorf("failed to create log file: %w", err)
+			}
 		}
 	}
 
-	// Get current state
-	wasInitialized := l.state.IsInitialized.Load()
-	wasStarted := l.state.Started.Load()
-
-	// Determine if restart is needed
-	needsRestart := wasStarted && wasInitialized && configRequiresRestart(oldCfg, cfg)
-
-	// Stop processor if restart needed
-	if needsRestart {
-		if err := l.Stop(); err != nil {
-			l.currentConfig.Store(oldCfg) // Rollback
+	// Drain with the old configuration and file before publishing the new one.
+	if needsRestart || wasStarted && needsNewFile {
+		needsRestart = true
+		if err := l.stopLocked(); err != nil {
+			if newFile != nil {
+				_ = newFile.Close()
+			}
 			return fmtErrorf("failed to stop processor for restart: %w", err)
 		}
 	}
 
-	// Get current file handle
-	currentFilePtr := l.state.CurrentFile.Load()
-	var currentFile *os.File
-	if currentFilePtr != nil {
-		currentFile, _ = currentFilePtr.(*os.File)
-	}
-
-	// Determine if we need a new file
-	needsNewFile := !wasInitialized || currentFile == nil ||
-		oldCfg.Directory != cfg.Directory ||
-		oldCfg.Name != cfg.Name ||
-		oldCfg.Extension != cfg.Extension
-
-	// Handle file state transitions
-	if !cfg.EnableFile {
-		// When disabling file output, close the current file
+	// Draining may rotate the old file; close the handle the processor left behind.
+	currentFile, _ = l.state.CurrentFile.Load().(*os.File)
+	if !cfg.EnableFile || newFile != nil {
 		if currentFile != nil {
-			// Sync and close the file
-			_ = currentFile.Sync()
 			if err := currentFile.Close(); err != nil {
-				l.internalLog("warning - failed to close log file during disable: %v\n", err)
+				l.internalLog("failed to close old log file: %v\n", err)
 			}
 		}
-		l.state.CurrentFile.Store((*os.File)(nil))
+		l.state.CurrentFile.Store(newFile)
 		l.state.CurrentSize.Store(0)
-	} else if needsNewFile {
-		// When enabling file output or initializing, create new file
-		logFile, err := l.createNewLogFile()
-		if err != nil {
-			l.state.LoggerDisabled.Store(true)
-			l.currentConfig.Store(oldCfg) // Rollback
-			return fmtErrorf("failed to create log file: %w", err)
-		}
-
-		// Close old file if transitioning from one file to another
-		if currentFile != nil && currentFile != logFile {
-			_ = currentFile.Sync()
-			if err := currentFile.Close(); err != nil {
-				l.internalLog("warning - failed to close old log file: %v\n", err)
+		if newFile != nil {
+			if info, err := newFile.Stat(); err == nil {
+				l.state.CurrentSize.Store(info.Size())
 			}
-		}
-
-		l.state.CurrentFile.Store(logFile)
-		l.state.CurrentSize.Store(0)
-		if fi, errStat := logFile.Stat(); errStat == nil {
-			l.state.CurrentSize.Store(fi.Size())
 		}
 	}
 
-	// Setup console writer based on config
+	var writer io.Writer = io.Discard
 	if cfg.EnableConsole {
-		var writer io.Writer
+		writer = os.Stdout
 		if cfg.ConsoleTarget == "stderr" {
 			writer = os.Stderr
-		} else {
-			writer = os.Stdout
 		}
-		l.state.StdoutWriter.Store(&sink{w: writer})
-	} else {
-		l.state.StdoutWriter.Store(&sink{w: io.Discard})
 	}
-
-	// Mark as initialized
+	l.state.StdoutWriter.Store(&sink{w: writer})
+	l.currentConfig.Store(cfg)
+	l.rebuildFormatter(cfg)
+	l.state.Flags.Store(flagsFromConfig(cfg))
+	l.state.TraceDepth.Store(cfg.TraceDepth)
 	l.state.IsInitialized.Store(true)
 	l.state.ShutdownCalled.Store(false)
-	l.state.DiskFullLogged.Store(false)
+	// A running processor may have just reported an output failure. A hot
+	// configuration update must not revive its invalid file handle.
+	if !wasStarted || needsRestart {
+		l.state.LoggerDisabled.Store(false)
+		l.state.DiskFullLogged.Store(false)
+	}
 	l.state.DiskStatusOK.Store(true)
 	l.refreshLevelGate()
-
-	// Restart processor if it was running and needs restart
 	if needsRestart {
-		return l.Start()
+		return l.startLocked()
 	}
-
 	return nil
 }
 
-// Start begins log processing. Safe to call multiple times
-// Returns error if logger is not initialized
+// Start begins log processing. Repeated calls while running are no-ops.
+// ApplyConfig must succeed first. A processor still stopping cannot be restarted.
 func (l *Logger) Start() error {
-	if !l.state.IsInitialized.Load() {
+	l.initMu.Lock()
+	defer l.initMu.Unlock()
+	return l.startLocked()
+}
+
+func (l *Logger) startLocked() error {
+	if !l.state.IsInitialized.Load() || l.state.ShutdownCalled.Load() {
 		return fmtErrorf("logger not initialized, call ApplyConfig first")
 	}
-
-	// Check if processor didn't exit cleanly last time
-	if l.state.Started.Load() && !l.state.ProcessorExited.Load() {
-		// Force stop to clean up
-		l.internalLog("warning - processor still running from previous start, forcing stop\n")
-		if err := l.Stop(); err != nil {
-			return fmtErrorf("failed to stop hung processor: %w", err)
+	if l.state.Started.Load() {
+		if l.state.ProcessorExited.Load() {
+			return fmtErrorf("processor exited unexpectedly; call Stop before restarting")
 		}
+		return nil
+	}
+	if !l.state.ProcessorExited.Load() {
+		return fmtErrorf("previous processor is still stopping")
 	}
 
-	// Only start if not already started
-	if l.state.Started.CompareAndSwap(false, true) {
-		cfg := l.getConfig()
-
-		// Create log channels
-		ch := make(chan logRecord, cfg.BufferSize)
-		stop := make(chan struct{})
-		done := make(chan struct{})
-
-		l.state.ActiveLogChannel.Store(ch)
-		l.state.ProcStop.Store(stop)
-		l.state.ProcDone.Store(done)
-		l.state.ProcessorExited.Store(false)
-
-		// Start processor
-		l.spawn(func() { l.processLogs(ch, stop, done) })
-	}
-
+	ch := make(chan logRecord, l.getConfig().BufferSize)
+	stop, done := make(chan struct{}), make(chan struct{})
+	flush := make(chan flushRequest, 1)
+	l.processorErr = nil
+	l.sendMu.Lock()
+	l.state.ActiveLogChannel.Store(ch)
+	l.state.ProcStop.Store(stop)
+	l.state.ProcDone.Store(done)
+	l.state.flushRequestChan = flush
+	l.state.ProcessorExited.Store(false)
+	l.state.Started.Store(true)
 	l.refreshLevelGate()
+	l.sendMu.Unlock()
+	l.spawn(func() { l.processLogs(ch, stop, done, flush) })
 	return nil
 }
 
-// Stop halts log processing. Can be restarted with Start()
-// The record channel is never closed: producers are detached to a nil channel
-// first, so a concurrent send falls through to the drop counter instead of
-// racing a close.
+// Stop detaches producers, drains accepted records, and joins the processor.
+// After a timeout, Stop can be retried; Start and resource replacement remain
+// blocked until that processor exits. The default timeout is 2x flush interval.
 func (l *Logger) Stop(timeout ...time.Duration) error {
-	if !l.state.Started.CompareAndSwap(true, false) {
-		return nil // Already stopped
-	}
-	l.refreshLevelGate()
+	l.initMu.Lock()
+	defer l.initMu.Unlock()
+	return l.stopLocked(timeout...)
+}
 
-	// Calculate effective timeout
-	var effectiveTimeout time.Duration
+func (l *Logger) stopLocked(timeout ...time.Duration) error {
+	l.sendMu.Lock()
+	if l.state.Started.Swap(false) {
+		l.refreshLevelGate()
+		l.state.ActiveLogChannel.Store((chan logRecord)(nil))
+		close(l.state.ProcStop.Load().(chan struct{}))
+	}
+	l.sendMu.Unlock()
+
+	done, _ := l.state.ProcDone.Load().(chan struct{})
+	if done == nil {
+		return nil
+	}
+	effectiveTimeout := 2 * time.Duration(l.getConfig().FlushIntervalMs) * time.Millisecond
 	if len(timeout) > 0 {
 		effectiveTimeout = timeout[0]
-	} else {
-		effectiveTimeout = 2 * time.Duration(l.getConfig().FlushIntervalMs) * time.Millisecond
 	}
-	if effectiveTimeout < minWaitTime {
-		effectiveTimeout = minWaitTime
-	}
-
-	// 1. Detach producers
-	l.state.ActiveLogChannel.Store((chan logRecord)(nil))
-
-	// 2. Signal the processor to drain and exit
-	if s, ok := l.state.ProcStop.Load().(chan struct{}); ok && s != nil {
-		close(s)
-	}
-
-	// 3. Join
-	d, _ := l.state.ProcDone.Load().(chan struct{})
-	if d == nil {
-		return nil
-	}
+	effectiveTimeout = max(effectiveTimeout, minWaitTime)
+	// Prefer an already completed processor even with a tiny timeout.
 	select {
-	case <-d:
-		return nil
-	case <-time.After(effectiveTimeout):
+	case <-done:
+		return l.processorErr
+	default:
+	}
+	timer := time.NewTimer(effectiveTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return l.processorErr
+	case <-timer.C:
 		return fmtErrorf("processor did not exit within timeout (%v)", effectiveTimeout)
 	}
 }
 
-// Shutdown gracefully closes the logger, attempting to flush pending records
-// If no timeout is provided, uses a default of 2x flush interval
+// Shutdown stops the logger and closes its file after the processor exits.
+// If joining times out, resources remain owned by the processor; retry Shutdown
+// to finish cleanup. A completed shutdown can be reset by ApplyConfig.
 func (l *Logger) Shutdown(timeout ...time.Duration) error {
-	if !l.state.ShutdownCalled.CompareAndSwap(false, true) {
+	l.initMu.Lock()
+	defer l.initMu.Unlock()
+	if !l.state.IsInitialized.Load() {
 		return nil
 	}
-
+	l.state.ShutdownCalled.Store(true)
 	l.state.LoggerDisabled.Store(true)
 	l.refreshLevelGate()
-
-	if !l.state.IsInitialized.Load() {
-		l.state.ShutdownCalled.Store(false)
-		l.state.LoggerDisabled.Store(false)
-		l.state.ProcessorExited.Store(true)
-		l.refreshLevelGate()
-		return nil
+	err := l.stopLocked(timeout...)
+	if !l.state.ProcessorExited.Load() {
+		return err
 	}
-
-	var stopErr error
-	if l.state.Started.Load() {
-		stopErr = l.Stop(timeout...)
-	}
-
 	l.state.IsInitialized.Store(false)
-
-	var finalErr error
-	cfPtr := l.state.CurrentFile.Load()
-	if cfPtr != nil {
-		if currentLogFile, ok := cfPtr.(*os.File); ok && currentLogFile != nil {
-			if err := currentLogFile.Sync(); err != nil {
-				syncErr := fmtErrorf("failed to sync log file '%s' during shutdown: %w", currentLogFile.Name(), err)
-				finalErr = errors.Join(finalErr, syncErr)
-			}
-			if err := currentLogFile.Close(); err != nil {
-				closeErr := fmtErrorf("failed to close log file '%s' during shutdown: %w", currentLogFile.Name(), err)
-				finalErr = errors.Join(finalErr, closeErr)
-			}
-			l.state.CurrentFile.Store((*os.File)(nil))
-		}
+	if file, _ := l.state.CurrentFile.Load().(*os.File); file != nil {
+		err = errors.Join(err, file.Sync(), file.Close())
+		l.state.CurrentFile.Store((*os.File)(nil))
 	}
-
-	if stopErr != nil {
-		finalErr = errors.Join(finalErr, stopErr)
-	}
-
-	return finalErr
+	return err
 }
 
-// Flush explicitly triggers a sync of the current log file buffer to disk and waits for completion or timeout
+// Flush processes records queued before the request and syncs the current file.
+// The timeout covers queueing and confirmation. Concurrent later records need
+// not be drained, so sustained producers cannot starve the barrier.
 func (l *Logger) Flush(timeout time.Duration) error {
-	l.state.flushMutex.Lock()
-	defer l.state.flushMutex.Unlock()
-
-	// State checks
+	l.sendMu.RLock()
 	if !l.state.IsInitialized.Load() || l.state.ShutdownCalled.Load() {
+		l.sendMu.RUnlock()
 		return fmtErrorf("logger not initialized or already shut down")
 	}
 	if !l.state.Started.Load() {
+		l.sendMu.RUnlock()
 		return fmtErrorf("logger not started")
 	}
-
-	// Create a channel to wait for confirmation from the processor
-	confirmChan := make(chan struct{})
-
-	// Send the request with the confirmation channel
-	select {
-	case l.state.flushRequestChan <- confirmChan:
-		// Request sent
-	case <-time.After(minWaitTime): // Short timeout to prevent blocking if processor is stuck
-		return fmtErrorf("failed to send flush request to processor (possible deadlock or high load)")
+	requests := l.state.flushRequestChan
+	done := l.state.ProcDone.Load().(chan struct{})
+	l.sendMu.RUnlock()
+	if timeout <= 0 {
+		return fmtErrorf("timeout waiting for flush confirmation (%v)", timeout)
 	}
 
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	request := flushRequest{done: make(chan error, 1)}
 	select {
-	case <-confirmChan:
-		return nil
-	case <-time.After(timeout):
+	case requests <- request:
+	case <-done:
+		return fmtErrorf("processor stopped during flush")
+	case <-timer.C:
+		return fmtErrorf("timeout sending flush request (%v)", timeout)
+	}
+	select {
+	case err := <-request.done:
+		return err
+	case <-done:
+		return fmtErrorf("processor stopped during flush")
+	case <-timer.C:
 		return fmtErrorf("timeout waiting for flush confirmation (%v)", timeout)
 	}
 }
 
 // SetSpawn installs the goroutine launcher used by Start. Hosts that own
 // panic recovery and terminal teardown pass their own launcher here.
-// Call before Start; a nil fn restores the default.
+// Call before Start; fn must launch asynchronously and return promptly.
+// A nil fn restores the default.
 func (l *Logger) SetSpawn(fn func(func())) {
 	if fn == nil {
 		l.spawner.Store(nil)
@@ -420,7 +372,8 @@ func (l *Logger) SetSpawn(fn func(func())) {
 }
 
 // SetErrorHandler routes internal diagnostics to fn instead of stderr.
-// Required for TUI hosts, where stderr writes corrupt the display.
+// Required for TUI hosts, where stderr writes corrupt the display. The callback
+// must return promptly and must not call lifecycle/configuration methods or Flush.
 func (l *Logger) SetErrorHandler(fn func(string)) {
 	if fn == nil {
 		l.errHandler.Store(nil)
@@ -450,15 +403,16 @@ func (l *Logger) SetLevel(level int64) {
 	cfg := l.getConfig().Clone()
 	cfg.Level = level
 	l.currentConfig.Store(cfg)
-	l.initMu.Unlock()
 	l.refreshLevelGate()
+	l.initMu.Unlock()
 }
 
 // Enabled reports whether a record at level would be emitted. Single atomic
 // load: the intended guard for hot call sites, where argument slices are
 // built before the call and would otherwise escape to the heap.
 func (l *Logger) Enabled(level int64) bool {
-	return level >= l.state.Level.Load()
+	threshold := l.state.Level.Load()
+	return threshold != levelOff && level >= threshold
 }
 
 // Flags returns the default record flags derived from display config
@@ -468,7 +422,7 @@ func (l *Logger) Flags() int64 {
 
 // LogContext emits a record with caller-supplied context and explicit flags
 func (l *Logger) LogContext(ctx Context, flags, level, depth int64, args ...any) {
-	if level < l.state.Level.Load() {
+	if !l.Enabled(level) {
 		return
 	}
 	l.emit(ctx, flags, level, depth, args)
@@ -591,7 +545,10 @@ func (l *Logger) LogTrace(depth int, args ...any) {
 
 // LogStructured logs a message with structured fields as proper JSON
 func (l *Logger) LogStructured(level int64, message string, fields map[string]any) {
-	l.LogContext(Context{}, l.getFlags()|FlagStructuredJSON, level, 0, message, fields)
+	if !l.Enabled(level) {
+		return
+	}
+	l.LogContext(Context{}, l.getFlags()|FlagStructuredJSON, level, 0, message, maps.Clone(fields))
 }
 
 // Write outputs raw, unformatted data ignoring configured format and sanitization
