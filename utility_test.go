@@ -149,4 +149,3 @@ func TestGetTraceOrdering(t *testing.T) {
 		t.Errorf("frames not ordered: %q", trace)
 	}
 }
-

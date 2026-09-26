@@ -1,359 +1,112 @@
-# Compatibility Adapters
+# Compatibility adapters
 
-Guide to using lixenwraith/log with popular Go networking frameworks through compatibility adapters.
+The `compat` package provides logging adapters for gnet v2, fasthttp, and Fiber v2. Framework dependencies are not imported by this module; applications supply them.
 
-## Overview
+## Shared logger setup
 
-The `compat` package provides adapters that allow the lixenwraith/log logger to work seamlessly with:
-
-- **gnet v2**: High-performance event-driven networking framework
-- **fasthttp**: Fast HTTP implementation
-
-### Features
-
-- Full interface compatibility
-- Preserves structured logging
-- Configurable behavior
-- Shared logger instances
-- Optional field extraction
-
-## gnet Adapter
-
-### Basic Usage
+Configure and start the logger before passing an adapter to a framework:
 
 ```go
-import (
-    "github.com/lixenwraith/log"
-    "github.com/lixenwraith/log/compat"
-    "github.com/panjf2000/gnet/v2"
-)
-
-// Create logger
-logger := log.NewLogger()
-cfg := log.DefaultConfig()
-cfg.Directory = "/var/log/gnet"
-logger.ApplyConfig(cfg)
-defer logger.Shutdown()
-
-// Create adapter
-adapter := compat.NewGnetAdapter(logger)
-
-// Use with gnet
-gnet.Run(eventHandler, "tcp://127.0.0.1:9000", 
-    gnet.WithLogger(adapter),
-)
-```
-
-### gnet Interface Implementation
-
-The adapter implements all gnet logger methods:
-
-```go
-type GnetAdapter struct {
-    logger *log.Logger
+logger, err := log.NewBuilder().
+    Directory("/var/log/service").
+    EnableFile(true).
+    Format("json").
+    LevelString("info").
+    Build()
+if err != nil { return err }
+if err := logger.Start(); err != nil {
+    _ = logger.Shutdown()
+    return err
 }
+defer logger.Shutdown(5 * time.Second)
 
-// Methods implemented:
-// - Debugf(format string, args ...any)
-// - Infof(format string, args ...any)
-// - Warnf(format string, args ...any)
-// - Errorf(format string, args ...any)
-// - Fatalf(format string, args ...any)
-```
-
-### Custom Fatal Behavior
-
-Override default fatal handling:
-
-```go
-adapter := compat.NewGnetAdapter(logger,
-    compat.WithFatalHandler(func(msg string) {
-        // Custom cleanup
-        saveApplicationState()
-        notifyOperations(msg)
-        gracefulShutdown()
-        os.Exit(1)
-    }),
-)
-```
-
-### Complete gnet Example
-
-```go
-type echoServer struct {
-    gnet.BuiltinEventEngine
-    logger gnet.Logger
-}
-
-func (es *echoServer) OnBoot(eng gnet.Engine) gnet.Action {
-    es.logger.Infof("Server started on %s", eng.Addrs)
-    return gnet.None
-}
-
-func (es *echoServer) OnTraffic(c gnet.Conn) gnet.Action {
-    buf, _ := c.Next(-1)
-    es.logger.Debugf("Received %d bytes from %s", len(buf), c.RemoteAddr())
-    c.Write(buf)
-    return gnet.None
-}
-
-func main() {
-    logger := log.NewLogger()
-	cfg := log.DefaultConfig()
-    cfg.Directory = "/var/log/gnet"
-	cfg.Format = "json"
-	cfg.BufferSize = 2048
-	logger.ApplyConfig(cfg)
-    defer logger.Shutdown()
-    
-    adapter := compat.NewGnetAdapter(logger)
-    
-    gnet.Run(
-        &echoServer{logger: adapter},
-        "tcp://127.0.0.1:9000",
-        gnet.WithMulticore(true),
-        gnet.WithLogger(adapter),
-    )
-}
-```
-
-## fasthttp Adapter
-
-### Basic Usage
-
-```go
-import (
-    "github.com/lixenwraith/log"
-    "github.com/lixenwraith/log/compat"
-    "github.com/valyala/fasthttp"
-)
-
-// Create logger
-logger := log.NewLogger()
-cfg := log.DefaultConfig()
-cfg.Directory = "/var/log/fasthttp"
-logger.ApplyConfig(cfg)
-defer logger.Shutdown()
-
-// Create adapter
-adapter := compat.NewFastHTTPAdapter(logger)
-
-// Configure server
-server := &fasthttp.Server{
-    Handler: requestHandler,
-    Logger:  adapter,
-}
-```
-
-### Level Detection
-
-The adapter automatically detects log levels from message content:
-
-```go
-// Default detection rules:
-// - Contains "error", "failed", "fatal", "panic" → ERROR
-// - Contains "warn", "warning", "deprecated" → WARN  
-// - Contains "debug", "trace" → DEBUG
-// - Otherwise → INFO
-```
-
-### Custom Level Detection
-
-```go
-adapter := compat.NewFastHTTPAdapter(logger,
-    compat.WithDefaultLevel(log.LevelInfo),
-    compat.WithLevelDetector(func(msg string) int64 {
-        // Custom detection logic
-        if strings.Contains(msg, "CRITICAL") {
-            return log.LevelError
-        }
-        if strings.Contains(msg, "performance") {
-            return log.LevelWarn
-        }
-        // Return 0 to use the adapter's default log level (log.LevelInfo by default)
-        return 0
-    }),
-)
-```
-
-## Builder Pattern
-
-### Using Existing Logger (Recommended)
-
-Share a configured logger across adapters:
-
-```go
-// Create and configure your main logger
-logger := log.NewLogger()
-cfg := log.DefaultConfig()
-cfg.Level = log.LevelDebug
-logger.ApplyConfig(cfg)
-logger.Start()
-defer logger.Shutdown()
-
-// Create builder with existing logger
 builder := compat.NewBuilder().WithLogger(logger)
-
-// Build adapters
-gnetAdapter, _ := builder.BuildGnet()
+gnetAdapter, err := builder.BuildGnet()
 if err != nil { return err }
-
-fasthttpAdapter, _ := builder.BuildFastHTTP()
+fastHTTPAdapter, err := builder.BuildFastHTTP()
+if err != nil { return err }
+fiberAdapter, err := builder.BuildFiber()
 if err != nil { return err }
 ```
 
-### Creating New Logger
+Alternatively, `compat.NewBuilder().WithConfig(cfg)` creates an initialized logger on the first build. Retrieve it with `GetLogger()` and call `Start()` explicitly. `WithLogger` takes precedence over `WithConfig`. Builders and option application are single-goroutine operations; completed adapters may be shared with a shared Logger.
 
-Let the builder create a logger with config:
+## gnet
+
+`GnetAdapter` implements `Debugf`, `Infof`, `Warnf`, `Errorf`, and `Fatalf`. Pass it through `gnet.WithLogger(adapter)`:
 
 ```go
-// Option 1: With custom config
-cfg := log.DefaultConfig()
-cfg.Directory = "/var/log/app"
-builder := compat.NewBuilder().WithConfig(cfg)
-
-// Option 2: Default config (created on first build)
-builder := compat.NewBuilder()
-if err != nil { return err }
-
-// Build adapters
-gnetAdapter, _ := builder.BuildGnet()
-logger, _ := builder.GetLogger() // Retrieve for direct use
+adapter := compat.NewGnetAdapter(logger)
+err := gnet.Run(eventHandler, "tcp://127.0.0.1:9000", gnet.WithLogger(adapter))
 ```
 
-### Structured gnet Adapter
+Ordinary messages include `msg` and `source` (`gnet`) as positional arguments. With JSON output, these appear in the `fields` array. Use the logger's `LogStructured` or `LogContext` with `FlagKV` directly if a keyed JSON object is required.
 
-Extract fields from printf-style formats:
+### Structured field extraction
 
-```go
-structuredAdapter, _ := builder.BuildStructuredGnet()
-// "client=%s port=%d" → {"client": "...", "port": ...}
-```
-
-## Structured Logging
-
-### Field Extraction
-
-Structured adapters can extract fields from printf-style formats:
-
-```go
-// Regular adapter output:
-// "client=192.168.1.1 port=8080"
-
-// Structured adapter output:
-// {"client": "192.168.1.1", "port": 8080, "source": "gnet"}
-```
-
-### Pattern Detection
-
-The structured adapter recognizes patterns like:
-- `key=%v`
-- `key: %v`
-- `key = %v`
+`NewStructuredGnetAdapter` extracts simple `key=%v` or `key: %v` expressions with unindexed, single-argument verbs:
 
 ```go
 adapter := compat.NewStructuredGnetAdapter(logger)
-
-// These will extract structured fields:
 adapter.Infof("client=%s port=%d", "192.168.1.1", 8080)
-// → {"client": "192.168.1.1", "port": 8080}
-
-adapter.Errorf("user: %s, error: %s", "john", "auth failed")
-// → {"user": "john", "error": "auth failed"}
-
-// These remain as messages:
-adapter.Infof("Connected to server")
-// → {"msg": "Connected to server"}
+// JSON fields: ["client", "192.168.1.1", "port", 8080, "source", "gnet"]
 ```
 
-### Integration Examples
+Text outside the expressions is retained in `msg`. Formats mixing unrelated conversions, argument indexes, width/precision, escaped percent signs, or a different argument count fall back to a complete `fmt.Sprintf` message. Extraction never guesses which argument belongs to a key.
 
-#### Microservice with Both Frameworks
+## fasthttp
+
+`FastHTTPAdapter` implements the `Printf` method accepted by `fasthttp.Server.Logger`:
 
 ```go
-type Service struct {
-    gnetAdapter     *compat.GnetAdapter
-    fasthttpAdapter *compat.FastHTTPAdapter
-    logger          *log.Logger
-}
-
-func NewService() (*Service, error) {
-    // Create and configure logger
-    logger := log.NewLogger()
-    cfg := log.DefaultConfig()
-    cfg.Directory = "/var/log/service"
-    cfg.Format = "json"
-    cfg.HeartbeatLevel = 2
-    if err := logger.ApplyConfig(cfg); err != nil {
-        return nil, err
-    }
-    if err := logger.Start(); err != nil {
-        return nil, err
-    }
-
-    // Create builder with the logger
-    builder := compat.NewBuilder().WithLogger(logger)
-
-    // Build adapters
-    gnetAdapter, err := builder.BuildGnet()
-    if err != nil {
-        logger.Shutdown()
-        return nil, err
-    }
-
-    fasthttpAdapter, err := builder.BuildFastHTTP()
-    if err != nil {
-        logger.Shutdown()
-        return nil, err
-    }
-
-    return &Service{
-        gnetAdapter:     gnetAdapter,
-        fasthttpAdapter: fasthttpAdapter,
-        logger:          logger,
-    }, nil
+adapter := compat.NewFastHTTPAdapter(logger)
+server := &fasthttp.Server{
+    Handler: requestHandler,
+    Logger: adapter,
 }
 ```
 
-#### Middleware Integration
+The default detector performs a case-insensitive substring check:
+
+| Message contains | Level |
+|---|---|
+| `error`, `failed`, `fatal`, or `panic` | Error |
+| `warn` or `deprecated` | Warn |
+| `debug` or `trace` | Debug |
+| Otherwise | Configured default (Info initially) |
+
+This heuristic does not interpret HTTP status numbers. Disable it with `WithLevelDetector(nil)`, or provide a custom function. A detector result of zero selects the configured default; nonzero custom levels are preserved.
 
 ```go
-// gnet middleware
-func loggingMiddleware(adapter *compat.GnetAdapter) gnet.EventHandler {
-    return func(c gnet.Conn) gnet.Action {
-        start := time.Now()
-        addr := c.RemoteAddr()
-        
-        // Process connection
-        action := next(c)
-        
-        adapter.Infof("conn_duration=%v remote=%s action=%v",
-            time.Since(start), addr, action)
-        
-        return action
-    }
-}
-
-// fasthttp middleware
-func requestLogger(adapter *compat.FastHTTPAdapter) fasthttp.RequestHandler {
-    return func(ctx *fasthttp.RequestCtx) {
-        start := time.Now()
-        
-        // Process request
-        next(ctx)
-        
-        // Adapter will detect level from status
-        adapter.Printf("method=%s path=%s status=%d duration=%v",
-            ctx.Method(), ctx.Path(), 
-            ctx.Response.StatusCode(),
-            time.Since(start))
-    }
-}
+adapter := compat.NewFastHTTPAdapter(logger,
+    compat.WithDefaultLevel(log.LevelWarn),
+    compat.WithLevelDetector(nil),
+)
 ```
+
+## Fiber
+
+`FiberAdapter` provides plain, printf-style (`Infof`), and key/value (`Infow`) logging methods, and implements `io.Writer` through `Write([]byte)`. Trace methods currently map to Debug with a `level`, `trace` marker. Use it directly in Fiber middleware:
+
+```go
+adapter := compat.NewFiberAdapter(logger)
+app.Use(func(c *fiber.Ctx) error {
+    err := c.Next()
+    adapter.Infow("request", "method", c.Method(), "path", c.Path(),
+        "status", c.Response().StatusCode())
+    return err
+})
+```
+
+## Fatal and panic behavior
+
+Fatal methods enqueue an Error record, attempt a flush for 100 ms, and invoke the configured handler. Defaults call `os.Exit(1)` for fatal and `panic(msg)` for Fiber panic methods. These effects still occur when the log level suppresses the record. A timed-out or failed flush cannot guarantee that the final message was written.
+
+Override behavior with `WithFatalHandler`, `WithFiberFatalHandler`, or `WithFiberPanicHandler`. A nil handler disables that action. Shut down the application/framework before the shared logger so shutdown messages can still be recorded.
 
 ### Simple integration example suite
 
-Below simple client and server examples can be used to test the basic functionality of the adapters. They are not included in the package to avoid dependency creep.
+These client and server examples can be used to test the basic functionality of the adapters. They are not included in the package to avoid dependency creep.
 
 
 #### gnet server
@@ -391,6 +144,7 @@ func main() {
 	// Minimal logger config
 	logger, err := log.NewBuilder().
 		Directory("./logs_gnet").
+		EnableFile(true).
 		Format("json").
 		LevelString("info").
 		HeartbeatLevel(0).
@@ -453,6 +207,7 @@ func main() {
 	// Minimal logger config
 	logger, err := log.NewBuilder().
 		Directory("./logs_fasthttp").
+		EnableFile(true).
 		Format("json").
 		LevelString("info").
 		HeartbeatLevel(0).
@@ -521,6 +276,7 @@ func main() {
 	// Minimal logger config
 	logger, err := log.NewBuilder().
 		Directory("./logs_fiber").
+		EnableFile(true).
 		Format("json").
 		LevelString("info").
 		HeartbeatLevel(0).

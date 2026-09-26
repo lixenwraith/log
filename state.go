@@ -1,7 +1,6 @@
 package log
 
 import (
-	"sync"
 	"sync/atomic"
 )
 
@@ -23,8 +22,7 @@ type State struct {
 	TraceDepth atomic.Int64
 
 	// Flushing state
-	flushRequestChan chan chan struct{} // Channel to request a flush
-	flushMutex       sync.Mutex         // Protect concurrent Flush calls
+	flushRequestChan chan flushRequest // per processor; published under sendMu
 
 	// Outputs
 	CurrentFile  atomic.Value // stores *os.File

@@ -37,7 +37,7 @@ Applies a validated configuration to the logger. This is the recommended method 
 ```go
 logger := log.NewLogger()
 
-cfg := log.GetConfig()
+cfg := log.DefaultConfig()
 cfg.Level = log.LevelDebug
 cfg.Directory = "/var/log/app"
 err := logger.ApplyConfig(cfg)
@@ -66,7 +66,7 @@ err := logger.ApplyConfigString("directory=/var/log/app", "name=app")
 
 ## Logging Methods
 
-All logging methods accept variadic arguments, typically used as key-value pairs for structured logging.
+Logging methods accept variadic arguments. Ordinary methods preserve them as positional values (a JSON array in JSON mode). Use `LogContext` with `FlagKV` for a keyed object, or `LogStructured` for a message and nested fields.
 
 ### Debug
 
@@ -217,7 +217,7 @@ logger.Log("Checkpoint reached", "step", 5)
 func (l *Logger) Message(args ...any)
 ```
 
-Logs raw message without timestamp or level.
+Logs using the configured format and sanitization, without timestamp or level.
 
 **Example:**
 ```go
@@ -239,13 +239,21 @@ logger.LogTrace(2, "Function boundary", "entering", true)
 
 ## Control Methods
 
+### Start and Stop
+
+`Start() error` begins processing after configuration; repeated starts are no-ops. `Stop(timeout ...time.Duration) error` closes emission, drains accepted records, and joins the processor. A timeout does not permit a second processor to start while the first still owns resources. Retry `Stop` or `Shutdown` to wait again. Lifecycle timeouts bound the processor join after acquiring the lifecycle lock.
+
+### Context and fast filtering
+
+`Enabled(level int64) bool` checks the current emit gate before constructing expensive arguments. `SetLevel(level int64)` updates the threshold without restarting. `SetContextKeys(tag string, vals ...string)` names a tag and up to three counters; `LogContext(ctx Context, flags, level, depth int64, args ...any)` stamps them onto a record. `Flags()` returns display defaults suitable for combining with `FlagKV`.
+
 ### Shutdown
 
 ```go
 func (l *Logger) Shutdown(timeout ...time.Duration) error
 ```
 
-Gracefully shuts down the logger, attempting to flush pending logs.
+Gracefully drains accepted records and closes the log file. If the processor times out, its resources remain open; retry `Shutdown` to finish cleanup. A fresh `ApplyConfig` permits reuse after shutdown.
 
 **Parameters:**
 - `timeout`: Optional timeout duration (defaults to 2x flush interval)
@@ -267,7 +275,7 @@ if err != nil {
 func (l *Logger) Flush(timeout time.Duration) error
 ```
 
-Explicitly triggers a sync of the current log file buffer to disk. Uses **barrier semantics**: it guarantees that all log records enqueued *before* the `Flush` call are fully processed and formatted before the disk sync occurs and confirmation is returned.
+Drains records enqueued before the request and syncs the file. Later arrivals do not extend the drain indefinitely. The timeout covers both queueing and confirmation. A successful return reports successful sync; previously dropped records cannot be recovered. A concurrent stop may return a stopped-processor error.
 
 **Parameters:**
 - `timeout`: Maximum time to wait for flush completion
@@ -286,6 +294,7 @@ err := logger.Flush(1 * time.Second)
 
 ```go
 const (
+    LevelTrace int64 = -8
     LevelDebug int64 = -4
     LevelInfo  int64 = 0
     LevelWarn  int64 = 4
@@ -316,7 +325,7 @@ func Level(levelStr string) (int64, error)
 Converts level string to numeric constant.
 
 **Parameters:**
-- `levelStr`: Level name ("debug", "info", "warn", "error", "proc", "disk", "sys")
+- `levelStr`: Level name ("trace", "debug", "info", "warn", "error", "proc", "disk", "sys")
 
 **Returns:**
 - `int64`: Numeric level value
@@ -337,6 +346,7 @@ const (
     FlagStructuredJSON = formatter.FlagStructuredJSON // Structured JSON output
     FlagNoTimestamp    = formatter.FlagNoTimestamp    // Suppress timestamp
     FlagNoLevel        = formatter.FlagNoLevel        // Suppress level
+    FlagKV             = formatter.FlagKV            // Alternating string keys and values
     FlagDefault        = formatter.FlagDefault        // Default flags
 )
 ```
@@ -348,9 +358,9 @@ Control output formatting behavior. These flags are re-exported from the formatt
 ```go
 const (
     PolicyRaw   = sanitizer.PolicyRaw   // No sanitization
-    PolicyJSON  = sanitizer.PolicyJSON  // JSON-safe output
+    PolicyJSON  = sanitizer.PolicyJSON  // Content control-character escapes
     PolicyTxt   = sanitizer.PolicyTxt   // Text file safe
-    PolicyShell = sanitizer.PolicyShell // Shell-safe output
+    PolicyShell = sanitizer.PolicyShell // Lossy filter, not shell quoting
 )
 ```
 
@@ -376,7 +386,11 @@ The logger returns errors prefixed with "log: " for easy identification:
 
 ## Thread Safety
 
-All public methods are thread-safe and can be called concurrently from multiple goroutines. The logger uses atomic operations and channels to ensure safe concurrent access without locks in the critical path.
+Logger methods support concurrent calls. Lifecycle and configuration changes are serialized. Enqueues hold a short read lock to prevent records being stranded during a stop. Logger, Formatter, Sanitizer, and Builder instances must not be copied after use.
+
+`ApplyConfig` takes a snapshot. Emission copies the argument slice, and `LogStructured` also copies the top-level fields map. Referenced values (byte slices, nested maps/slices, pointers, Stringers, and custom marshalers) remain caller-owned: keep them immutable until a successful `Flush` or `Stop`, or pass an application-created snapshot. Do not mutate configuration while an `ApplyConfig` call is reading it.
+
+Builders and standalone formatter/sanitizer configuration are not synchronized; finish configuration before sharing. `SetSpawn` callbacks must launch the function asynchronously and return promptly. Error handlers must return promptly and must not invoke lifecycle/configuration methods or `Flush`.
 
 ### Usage Pattern Example
 
@@ -396,6 +410,10 @@ func NewService() (*Service, error) {
         return nil, fmt.Errorf("logger init: %w", err)
     }
     
+    if err := logger.Start(); err != nil {
+        _ = logger.Shutdown()
+        return nil, err
+    }
     return &Service{logger: logger}, nil
 }
 

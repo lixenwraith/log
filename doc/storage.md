@@ -10,31 +10,19 @@ Log files are automatically rotated when they reach the configured size limit in
 
 ```go
 logger.ApplyConfigString(
-    "max_size_kb=102400",  // Rotate at 100MB (102400 KB)
+    "max_size_kb=100000",  // Rotate at 100 MB (100,000 KB)
 )
 ```
 
 ### Rotation Behavior
 
-1. **Size Check**: Before each write, the logger checks if the file would exceed `max_size_kb`
-2. **New File Creation**: Creates a new file with timestamp: `appname_240115_103045_123456789.log`
-3. **Seamless Transition**: No logs are lost during rotation
-4. **Old File Closure**: Previous file is properly closed and synced
+1. Before each write, the logger checks whether the active file would exceed `max_size_kb`.
+2. It closes the active `{name}.{extension}` file and renames it to `{name}_{YYMMDD}_{HHMMSS}[_N].{extension}`.
+3. It opens a new active file. A counter suffix avoids existing names when rotations share a second.
 
-### File Naming Convention
+For example: `myapp.log` becomes `myapp_240115_143022.log`, then `myapp_240115_143022_1.log` on the next collision. Rotation does not split a record, so a single oversized record can exceed the size limit. File errors can drop records and are counted. Periodic sync, explicit `Flush`, and shutdown provide sync points; closing a file alone does not guarantee crash durability.
 
-```
-{name}_{YYMMDD}_{HHMMSS}_{nanoseconds}.{extension}
-
-Example: myapp_240115_143022_987654321.log
-```
-
-Components:
-- `name`: Configured log name
-- `YYMMDD`: Date (year, month, day)
-- `HHMMSS`: Time (hour, minute, second)
-- `nanoseconds`: For uniqueness
-- `extension`: Configured extension
+Use a directory owned exclusively by this logger. Cleanup and retention select regular files by extension, including files from earlier runs with different base names. They exclude the active filename, directories, and symlinks. With an empty extension, only extensionless files match. Console-only configurations never perform retention deletion. Total-size and free-space limits are checked periodically and can be exceeded between checks.
 
 ## Disk Space Management
 
@@ -45,7 +33,7 @@ The logger enforces two types of space limits:
 ```go
 logger.ApplyConfigString(
     "max_total_size_kb=1000",   // Total log directory size
-    "min_disk_free_kb=5000",    // Minimum free disk space
+    "min_disk_free_mb=5000",    // Minimum free disk space
 )
 ```
 
@@ -55,7 +43,7 @@ When limits are exceeded, the logger:
 1. Identifies oldest log files
 2. Deletes them until space requirements are met
 3. Preserves the current active log file
-4. Logs cleanup actions for audit
+4. Increments deletion counters reported in disk heartbeats
 
 ### Example Configuration
 
@@ -64,21 +52,21 @@ When limits are exceeded, the logger:
 logger.ApplyConfigString(
     "max_size_kb=500",            // 500 KB files
     "max_total_size_kb=5000",     // 5 MB total log directory limit
-    "min_disk_free_kb=1048576",   // 1 GB free space required on disk
+    "min_disk_free_mb=1000000",   // 1 GB free space required on disk
 )
 
 // Generous: Large files, external archival
 logger.ApplyConfigString(
-    "max_size_kb=102400",         // 100 MB files
+    "max_size_kb=100000",         // 100 MB files
     "max_total_size_kb=0",        // No total limit
-    "min_disk_free_kb=10240",     // 10 MB free required
+    "min_disk_free_mb=10000",     // 10 MB free required
 )
 
 // Balanced: Production defaults
 logger.ApplyConfigString(
-    "max_size_kb=102400",         // 100 MB files
-    "max_total_size_kb=5242880",  // 5 GB total limit
-    "min_disk_free_kb=512000",    // 500 MB free required
+    "max_size_kb=100000",         // 100 MB files
+    "max_total_size_kb=5000000",  // 5 GB total limit
+    "min_disk_free_mb=500000",    // 500 MB free required
 )
 ```
 
@@ -161,7 +149,7 @@ logger.ApplyConfigString(
 
 Output:
 ```
-2024-01-15T10:30:00Z DISK type="disk" sequence=1 rotated_files=5 deleted_files=2 total_log_size_kb="487.32" log_file_count=8 current_file_size_kb="23.45" disk_status_ok=true disk_free_kb="5234.67"
+2024-01-15T10:30:00Z DISK type="disk" sequence=1 rotated_files=5 deleted_files=2 total_log_size_mb="487.32" log_file_count=8 current_file_size_mb="23.45" disk_status_ok=true disk_free_mb="5234.67"
 ```
 
 ## Manual Recovery
@@ -176,7 +164,8 @@ df -h /var/log
 find /var/log/myapp -name "*.log" -size +100M
 
 # Manual cleanup (oldest first)
-ls -t /var/log/myapp/*.log | tail -n 20 | xargs rm
+# Review archive paths before deleting; preserve the active log file.
+find /var/log/myapp -maxdepth 1 -type f -name 'myapp_*.log' -print
 
 # Verify space
 df -h /var/log

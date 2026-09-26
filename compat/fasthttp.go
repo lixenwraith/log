@@ -59,16 +59,20 @@ func (a *FastHTTPAdapter) Printf(format string, args ...any) {
 		}
 	}
 
-	// Log with appropriate level
 	switch level {
 	case log.LevelDebug:
 		a.logger.Debug("msg", msg, "source", "fasthttp")
+	case log.LevelInfo:
+		a.logger.Info("msg", msg, "source", "fasthttp")
 	case log.LevelWarn:
 		a.logger.Warn("msg", msg, "source", "fasthttp")
 	case log.LevelError:
 		a.logger.Error("msg", msg, "source", "fasthttp")
 	default:
-		a.logger.Info("msg", msg, "source", "fasthttp")
+		if a.logger.Enabled(level) {
+			a.logger.LogContext(log.Context{}, a.logger.Flags(), level, a.logger.GetConfig().TraceDepth,
+				"msg", msg, "source", "fasthttp")
+		}
 	}
 }
 

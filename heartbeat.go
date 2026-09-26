@@ -135,6 +135,7 @@ func (l *Logger) writeHeartbeatRecord(level int64, args []any) {
 	}
 
 	record := logRecord{
+		heartbeat: true,
 		Flags:     FlagDefault | FlagKV,
 		TimeStamp: time.Now(),
 		Level:     level,

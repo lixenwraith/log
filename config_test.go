@@ -190,4 +190,3 @@ func TestConcurrentApplyConfig(t *testing.T) {
 		return strings.Contains(readLog(t, tmpDir), "after concurrent config")
 	})
 }
-

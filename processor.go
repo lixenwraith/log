@@ -1,6 +1,7 @@
 package log
 
 import (
+	"io"
 	"os"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 // processLogs is the main log processing loop running in a separate goroutine.
 // Exits on stop, draining buffered records first. No panic recovery: a fault
 // here is fatal by design and is surfaced by the host's spawner.
-func (l *Logger) processLogs(ch <-chan logRecord, stop <-chan struct{}, done chan<- struct{}) {
+func (l *Logger) processLogs(ch <-chan logRecord, stop <-chan struct{}, done chan<- struct{}, flush <-chan flushRequest) {
 	defer func() {
 		l.state.ProcessorExited.Store(true)
 		close(done)
@@ -51,7 +52,7 @@ func (l *Logger) processLogs(ch <-chan logRecord, stop <-chan struct{}, done cha
 		select {
 		case <-stop:
 			l.drain(ch)
-			l.performSync()
+			l.processorErr = l.performSync()
 			return
 
 		case record := <-ch:
@@ -84,9 +85,9 @@ func (l *Logger) processLogs(ch <-chan logRecord, stop <-chan struct{}, done cha
 				lastCheckTime = time.Now()
 			}
 
-		case confirmChan := <-l.state.flushRequestChan:
+		case request := <-flush:
 			// Barrier: drain queued records before sync
-			l.handleFlushRequest(ch, confirmChan)
+			l.handleFlushRequest(ch, request)
 
 		case <-timers.retentionChan:
 			l.handleRetentionCheck()
@@ -99,22 +100,16 @@ func (l *Logger) processLogs(ch <-chan logRecord, stop <-chan struct{}, done cha
 
 // drain processes every buffered record without blocking
 func (l *Logger) drain(ch <-chan logRecord) {
-	for {
-		select {
-		case record := <-ch:
-			l.processLogRecord(record)
-		default:
-			return
-		}
+	// A snapshot bounds the flush work even while producers keep the queue full.
+	// Stop has already joined producers, so this also drains its entire queue.
+	for range len(ch) {
+		l.processLogRecord(<-ch)
 	}
 }
 
-// handleFlushRequest drains pending records, then syncs. Gives Flush barrier
-// semantics: records enqueued before the Flush call are processed first.
-func (l *Logger) handleFlushRequest(ch <-chan logRecord, confirmChan chan struct{}) {
+func (l *Logger) handleFlushRequest(ch <-chan logRecord, request flushRequest) {
 	l.drain(ch)
-	l.performSync()
-	close(confirmChan)
+	request.done <- l.performSync()
 }
 
 // processLogRecord handles individual log records and returns bytes written
@@ -123,8 +118,7 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 	enableFile := c.EnableFile
 	if enableFile && !l.state.DiskStatusOK.Load() {
 		// Simple increment of both counters
-		l.state.DroppedLogs.Add(1)
-		l.state.TotalDroppedLogs.Add(1)
+		l.handleFailedSend()
 		return 0
 	}
 
@@ -147,31 +141,33 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 	)
 	formattedDataLen := int64(len(formattedData))
 
-	// Write to console if enabled
-	enableConsole := c.EnableConsole
-	if enableConsole {
-		if s := l.state.StdoutWriter.Load(); s != nil {
-			if sinkWrapper, ok := s.(*sink); ok && sinkWrapper != nil {
-				// Handle split mode
-				if c.ConsoleTarget == "split" {
-					if record.Level >= LevelWarn {
-						// Write WARN and ERROR to stderr
-						_, _ = os.Stderr.Write(formattedData)
-					} else {
-						// Write INFO and DEBUG to stdout
-						_, _ = sinkWrapper.w.Write(formattedData)
-					}
-				} else {
-					// Write to the configured target (stdout or stderr)
-					_, _ = sinkWrapper.w.Write(formattedData)
-				}
+	var consoleErr error
+	if c.EnableConsole {
+		if target, _ := l.state.StdoutWriter.Load().(*sink); target != nil {
+			writer := target.w
+			if c.ConsoleTarget == "split" && record.Level >= LevelWarn {
+				writer = os.Stderr
+			}
+			n, err := writer.Write(formattedData)
+			if err == nil && n != len(formattedData) {
+				err = io.ErrShortWrite
+			}
+			consoleErr = err
+			if err != nil {
+				l.internalLog("failed to write to console: %v\n", err)
 			}
 		}
 	}
 
 	// Skip file operations if file output is disabled
 	if !enableFile {
-		l.state.TotalLogsProcessed.Add(1)
+		if consoleErr != nil {
+			l.handleFailedSend()
+			return 0
+		}
+		if !record.heartbeat {
+			l.state.TotalLogsProcessed.Add(1)
+		}
 		return formattedDataLen // Return data length for adaptive interval calculations
 	}
 
@@ -184,7 +180,7 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 		if err := l.rotateLogFile(); err != nil {
 			l.internalLog("failed to rotate log file: %v\n", err)
 			// Account for the dropped log that triggered the failed rotation
-			l.state.DroppedLogs.Add(1)
+			l.handleFailedSend()
 			return 0
 		}
 	}
@@ -195,16 +191,21 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 		n, err := currentLogFile.Write(formattedData)
 		if err != nil {
 			l.internalLog("failed to write to log file: %v\n", err)
-			l.state.DroppedLogs.Add(1)
+			l.handleFailedSend()
+			l.state.CurrentSize.Add(int64(n))
 			l.performDiskCheck(true)
 			return 0
 		} else {
 			l.state.CurrentSize.Add(int64(n))
-			l.state.TotalLogsProcessed.Add(1)
+			if consoleErr != nil {
+				l.handleFailedSend()
+			} else if !record.heartbeat {
+				l.state.TotalLogsProcessed.Add(1)
+			}
 			return int64(n)
 		}
 	} else {
-		l.state.DroppedLogs.Add(1)
+		l.handleFailedSend()
 		return 0
 	}
 }
@@ -214,7 +215,9 @@ func (l *Logger) handleFlushTick() {
 	c := l.getConfig()
 	enableSync := c.EnablePeriodicSync
 	if enableSync {
-		l.performSync()
+		if err := l.performSync(); err != nil {
+			l.internalLog("failed to sync log file: %v\n", err)
+		}
 	}
 }
 
@@ -224,7 +227,7 @@ func (l *Logger) handleRetentionCheck() {
 	retentionPeriodHrs := c.RetentionPeriodHrs
 	retentionDur := time.Duration(retentionPeriodHrs * float64(time.Hour))
 
-	if retentionDur > 0 {
+	if c.EnableFile && retentionDur > 0 {
 		etPtr := l.state.EarliestFileTime.Load()
 		if earliest, ok := etPtr.(time.Time); ok && !earliest.IsZero() {
 			if time.Since(earliest) > retentionDur {
@@ -253,13 +256,20 @@ func (l *Logger) adjustDiskCheckInterval(timers *TimerSet, lastCheckTime time.Ti
 	logsPerSecond := float64(logsSinceLastCheck) / elapsed.Seconds()
 	targetLogsPerSecond := float64(100) // Baseline
 
-	diskCheckIntervalMs := c.DiskCheckIntervalMs
-	currentDiskCheckInterval := time.Duration(diskCheckIntervalMs) * time.Millisecond
+	currentDiskCheckInterval := timers.diskInterval
+	if currentDiskCheckInterval == 0 {
+		currentDiskCheckInterval = time.Duration(c.DiskCheckIntervalMs) * time.Millisecond
+	}
 
 	// Calculate the new interval
 	var newInterval time.Duration
 	if logsPerSecond < targetLogsPerSecond/2 { // Load low -> increase interval
-		newInterval = time.Duration(float64(currentDiskCheckInterval) * adaptiveIntervalFactor)
+		scaled := float64(currentDiskCheckInterval) * adaptiveIntervalFactor
+		if scaled >= float64(time.Duration(c.MaxCheckIntervalMs)*time.Millisecond) {
+			newInterval = time.Duration(c.MaxCheckIntervalMs) * time.Millisecond
+		} else {
+			newInterval = time.Duration(scaled)
+		}
 	} else if logsPerSecond > targetLogsPerSecond*2 { // Load high -> decrease interval
 		newInterval = time.Duration(float64(currentDiskCheckInterval) * adaptiveSpeedUpFactor)
 	} else {
@@ -280,5 +290,6 @@ func (l *Logger) adjustDiskCheckInterval(timers *TimerSet, lastCheckTime time.Ti
 		newInterval = maxCheckInterval
 	}
 
+	timers.diskInterval = newInterval
 	timers.diskCheckTicker.Reset(newInterval)
 }

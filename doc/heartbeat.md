@@ -8,7 +8,7 @@ Heartbeats are periodic log messages that provide operational statistics about t
 
 ### Key Features
 
-- **Always Visible**: Heartbeats use special log levels that bypass filtering
+- **Independent of level filtering**: Heartbeats can still be dropped on queue overflow or output failure
 - **Multi-Level Detail**: Choose from process, disk, or system statistics
 - **Production Monitoring**: Track logger health without debug logs
 - **Metrics Source**: Parse heartbeats for monitoring dashboards
@@ -38,14 +38,15 @@ logger.ApplyConfigString(
 
 **Output:**
 ```
-2024-01-15T10:30:00Z PROC type="proc" sequence=1 uptime_hours="24.50" processed_logs=1847293 dropped_logs=0
+2024-01-15T10:30:00Z PROC type=proc sequence=1 uptime_hours="24.50" processed_logs=1847293 total_dropped_logs=0
 ```
 
 **Fields:**
 - `sequence`: Incrementing counter
 - `uptime_hours`: Logger uptime
-- `processed_logs`: Successfully written logs
-- `dropped_logs`: Logs lost due to buffer overflow
+- `processed_logs`: Application records processed successfully, excluding heartbeats
+- `total_dropped_logs`: Cumulative queue and output-processing drops, including heartbeats
+- `dropped_since_last`: Interval drops, emitted only when non-zero; reset at each PROC heartbeat attempt
 
 ### Level 2: Process + Disk Statistics (DISK)
 
@@ -60,7 +61,7 @@ logger.ApplyConfigString(
 
 **Additional Output:**
 ```
-2024-01-15T10:30:00Z DISK type="disk" sequence=1 rotated_files=12 deleted_files=5 total_log_size_mb="487.32" log_file_count=8 current_file_size_mb="23.45" disk_status_ok=true disk_free_mb="5234.67"
+2024-01-15T10:30:00Z DISK type=disk sequence=1 rotated_files=12 deleted_files=5 total_log_size_mb="487.32" log_file_count=8 current_file_size_mb="23.45" disk_status_ok=true disk_free_mb="5234.67"
 ```
 
 **Additional Fields:**
@@ -85,7 +86,7 @@ logger.ApplyConfigString(
 
 **Additional Output:**
 ```
-2024-01-15T10:30:00Z SYS type="sys" sequence=1 alloc_mb="45.23" sys_mb="128.45" num_gc=1523 num_goroutine=42
+2024-01-15T10:30:00Z SYS type=sys sequence=1 alloc_mb="45.23" sys_mb="128.45" num_gc=1523 num_goroutine=42
 ```
 
 **Additional Fields:**
@@ -146,13 +147,13 @@ With `format=json`, heartbeats are structured for easy parsing:
 {
   "time": "2024-01-15T10:30:00.123456789Z",
   "level": "PROC",
-  "fields": [
-    "type", "proc",
-    "sequence", 42,
-    "uptime_hours", "24.50",
-    "processed_logs", 1847293,
-    "dropped_logs", 0
-  ]
+  "fields": {
+    "type": "proc",
+    "sequence": 42,
+    "uptime_hours": "24.50",
+    "processed_logs": 1847293,
+    "total_dropped_logs": 0
+  }
 }
 ```
 
@@ -161,5 +162,7 @@ With `format=json`, heartbeats are structured for easy parsing:
 With `format=txt`, heartbeats are human-readable:
 
 ```
-2024-01-15T10:30:00.123456789Z PROC type="proc" sequence=42 uptime_hours="24.50" processed_logs=1847293 dropped_logs=0
+2024-01-15T10:30:00.123456789Z PROC type=proc sequence=42 uptime_hours="24.50" processed_logs=1847293 total_dropped_logs=0
 ```
+
+PROC uptime and totals span the lifetime of the Logger instance, including stop/start cycles. DISK fields ending in `_mb` retain historical binary MiB units (1,048,576 bytes); SYS memory fields use decimal MB. Configuration size limits use decimal KB.

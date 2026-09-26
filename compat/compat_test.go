@@ -501,4 +501,3 @@ func TestFiberAdapterWriter(t *testing.T) {
 	eq(t, level, "INFO", "level")
 	checkFields(t, fields, []any{"msg", "writer output", "source", "fiber"}, "Write")
 }
-

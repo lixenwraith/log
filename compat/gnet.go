@@ -42,24 +42,36 @@ func WithFatalHandler(handler func(string)) GnetOption {
 
 // Debugf logs at debug level with printf-style formatting
 func (a *GnetAdapter) Debugf(format string, args ...any) {
+	if !a.logger.Enabled(log.LevelDebug) {
+		return
+	}
 	msg := fmt.Sprintf(format, args...)
 	a.logger.Debug("msg", msg, "source", "gnet")
 }
 
 // Infof logs at info level with printf-style formatting
 func (a *GnetAdapter) Infof(format string, args ...any) {
+	if !a.logger.Enabled(log.LevelInfo) {
+		return
+	}
 	msg := fmt.Sprintf(format, args...)
 	a.logger.Info("msg", msg, "source", "gnet")
 }
 
 // Warnf logs at warn level with printf-style formatting
 func (a *GnetAdapter) Warnf(format string, args ...any) {
+	if !a.logger.Enabled(log.LevelWarn) {
+		return
+	}
 	msg := fmt.Sprintf(format, args...)
 	a.logger.Warn("msg", msg, "source", "gnet")
 }
 
 // Errorf logs at error level with printf-style formatting
 func (a *GnetAdapter) Errorf(format string, args ...any) {
+	if !a.logger.Enabled(log.LevelError) {
+		return
+	}
 	msg := fmt.Sprintf(format, args...)
 	a.logger.Error("msg", msg, "source", "gnet")
 }

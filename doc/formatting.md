@@ -65,6 +65,7 @@ const (
     FlagStructuredJSON int64 = 0b1000    // Use structured JSON with message/fields
     FlagNoTimestamp    int64 = 0b010000  // Suppress timestamp
     FlagNoLevel        int64 = 0b100000  // Suppress level
+    FlagKV             int64 = 0b1000000 // Alternating string keys and values
     FlagDefault              = FlagShowTimestamp | FlagShowLevel
 )
 ```
@@ -105,9 +106,9 @@ clean = s.Sanitize("cmd; echo test")  // "cmd echo test"
 ```go
 const (
     PolicyRaw   PolicyPreset = "raw"   // No-op passthrough
-    PolicyJSON  PolicyPreset = "json"  // JSON-safe strings
+    PolicyJSON  PolicyPreset = "json"  // Visible control-character escapes
     PolicyTxt   PolicyPreset = "txt"   // Text file safe
-    PolicyShell PolicyPreset = "shell" // Shell command safe
+    PolicyShell PolicyPreset = "shell" // Lossy filter, not shell quoting
 )
 ```
 
@@ -171,7 +172,26 @@ serializer.WriteNil(&buf)                     // "null"
 
 The sanitizer is a content transform; JSON string escaping is transport
 encoding applied afterward, unconditionally. Output is valid JSON for any
-sanitization policy. Multi-byte UTF-8 passes through unescaped.
+sanitization policy. Multi-byte UTF-8 passes through unescaped. Malformed UTF-8
+is replaced before rule-based sanitization, preventing stripped text from joining
+invalid byte fragments into control characters. A sanitizer with no rules remains
+byte-preserving; the JSON transport layer always replaces malformed UTF-8.
+
+JSON keys and custom timestamp layouts are escaped. Non-finite scalar floats
+are emitted as strings (`"NaN"`, `"+Inf"`, `"-Inf"`); non-finite values in structured
+maps follow `encoding/json` and produce a marshal error. As in the existing API,
+`int32` values are treated as runes; cast to `int64` when numeric output is needed.
+Choose unique context and KV keys; avoid context keys named `time`, `level`,
+`trace`, `message`, or `fields`. Content policies can make distinct keys identical.
+
+`PolicyTxt` covers text timestamps, trace, context, KV keys, and values. `PolicyRaw`
+is intentionally unfiltered, and `FlagRaw` bypasses formatting and sanitization.
+Generic complex-value text formatting is bounded to 64 levels and 10,000 visited
+values; cycles and larger graphs produce `<cyclic or oversized value>`. This also
+applies to complex values under `FlagRaw`, which use `%+v` text formatting.
+Custom formatting and marshal callbacks must terminate and be safe for shared use.
+A custom rule with no recognized transform preserves its matched rune. Predicate
+callbacks must be safe for concurrent use when the sanitizer is shared.
 
 - `format=json` + `sanitization=raw`: recommended; transport escaping only.
 - `format=json` + `sanitization=txt`: non-printables appear as `<XX>` inside
@@ -179,8 +199,9 @@ sanitization policy. Multi-byte UTF-8 passes through unescaped.
 - `format=json` + `sanitization=json`: redundant; produces visible `\\n`
   double escapes. Use `raw` instead.
 - Structured JSON (`FlagStructuredJSON`) marshals the fields map via
-  `encoding/json` and bypasses the sanitizer; validity is guaranteed,
-  content-level sanitization is not applied to field values.
+  `encoding/json`, then applies the content policy to every string, including
+  nested values and object keys. Value types and deterministic map order are preserved.
+  Marshal failures produce a valid `fields._marshal_error` string.
 
 ## PolicyShell Scope
 
@@ -215,13 +236,13 @@ logger := log.NewLogger()
 // Configure sanitization policy
 logger.ApplyConfigString(
     "format=json",
-    "sanitization=json",  // Uses PolicyJSON
+    "sanitization=raw",  // JSON transport escaping remains enabled
 )
 
 // Or with custom formatter (advanced)
 s := sanitizer.New().Policy(sanitizer.PolicyShell)
 customFormatter := formatter.New(s).Type("txt")
-// Note: Direct formatter injection requires using lower-level APIs
+// Use customFormatter directly; Logger has no formatter injection API.
 ```
 
 ## Common Patterns
@@ -247,7 +268,7 @@ f := formatter.New()
 f.Type("json").ShowTimestamp(false).ShowLevel(false)
 
 // Create custom log entry
-entry := f.FormatArgs("action", "purchase", "amount", 99.99)
+entry := f.Format(formatter.FlagKV, time.Now(), 0, "", []any{"action", "purchase", "amount", 99.99})
 sendToExternalSystem(entry)
 ```
 
@@ -262,17 +283,17 @@ shellSanitizer := sanitizer.New().Policy(sanitizer.PolicyShell)
 jsonFormatter := formatter.New(jsonSanitizer).Type("json")
 apiLog := jsonFormatter.Format(...)
 
-// For shell script generation
+// For a filtered text log
 txtFormatter := formatter.New(shellSanitizer).Type("txt")
-scriptLog := txtFormatter.Format(...)
+textLog := txtFormatter.Format(...)
 ```
 
 ## Performance Considerations
 
-- Both packages use pre-allocated buffers for efficiency
-- Sanitizer rules are applied in a single pass
+- Formatter append methods reuse caller-provided buffers
+- Sanitizer avoids allocations when no rule matches valid UTF-8
 - Formatter reuses internal buffers via `Reset()`
-- No regex or reflection in hot paths
+- Scalar formatting avoids reflection; complex values and structured marshaling may use it
 
 ## Ownership and Thread Safety
 

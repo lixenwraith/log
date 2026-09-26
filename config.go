@@ -2,6 +2,7 @@ package log
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -117,9 +118,22 @@ func (c *Config) Clone() *Config {
 
 // Validate performs validation on the configuration
 func (c *Config) Validate() error {
+	if c == nil {
+		return fmtErrorf("configuration cannot be nil")
+	}
 	// String validations
 	if strings.TrimSpace(c.Name) == "" {
 		return fmtErrorf("log name cannot be empty")
+	}
+
+	if c.Name == "." || c.Name == ".." || strings.ContainsAny(c.Name, "/\\\x00") || strings.ContainsAny(c.Extension, "/\\\x00") {
+		return fmtErrorf("name and extension must be filename components, without path separators or NUL")
+	}
+	if c.EnableFile && strings.TrimSpace(c.Directory) == "" {
+		return fmtErrorf("directory cannot be empty when file output is enabled")
+	}
+	if c.Level == levelOff {
+		return fmtErrorf("level is reserved for disabling emission")
 	}
 
 	if c.Format != "txt" && c.Format != "json" && c.Format != "raw" {
@@ -150,6 +164,14 @@ func (c *Config) Validate() error {
 		return fmtErrorf("buffer_size must be positive: %d", c.BufferSize)
 	}
 
+	// Bound allocation before make(chan): one million records already reserves
+	// over 100 MiB and is well beyond the default queue capacity.
+	if c.BufferSize > 1<<20 {
+		return fmtErrorf("buffer_size cannot exceed 1048576 records")
+	}
+	if c.MaxSizeKB > math.MaxInt64/sizeMultiplier || c.MaxTotalSizeKB > math.MaxInt64/sizeMultiplier || c.MinDiskFreeKB > math.MaxInt64/sizeMultiplier {
+		return fmtErrorf("size limits overflow byte counts")
+	}
 	if c.MaxSizeKB < 0 || c.MaxTotalSizeKB < 0 || c.MinDiskFreeKB < 0 {
 		return fmtErrorf("size limits cannot be negative")
 	}
@@ -157,6 +179,27 @@ func (c *Config) Validate() error {
 	if c.FlushIntervalMs <= 0 || c.DiskCheckIntervalMs <= 0 ||
 		c.MinCheckIntervalMs <= 0 || c.MaxCheckIntervalMs <= 0 {
 		return fmtErrorf("interval settings must be positive")
+	}
+
+	for _, ms := range []int64{c.FlushIntervalMs, c.DiskCheckIntervalMs, c.MinCheckIntervalMs, c.MaxCheckIntervalMs} {
+		if ms > math.MaxInt64/int64(time.Millisecond) {
+			return fmtErrorf("interval overflows time.Duration")
+		}
+	}
+	if c.FlushIntervalMs > math.MaxInt64/(2*int64(time.Millisecond)) {
+		return fmtErrorf("flush interval overflows default stop timeout")
+	}
+	if c.HeartbeatIntervalS > math.MaxInt64/int64(time.Second) {
+		return fmtErrorf("heartbeat interval overflows time.Duration")
+	}
+	for _, setting := range []struct{ value, unit float64 }{
+		{c.RetentionPeriodHrs, float64(time.Hour)},
+		{c.RetentionCheckMins, float64(time.Minute)},
+	} {
+		ns := setting.value * setting.unit
+		if math.IsNaN(ns) || math.IsInf(ns, 0) || ns >= float64(math.MaxInt64) || setting.value > 0 && ns < 1 {
+			return fmtErrorf("retention settings must be finite and representable as time.Duration")
+		}
 	}
 
 	if c.TraceDepth < 0 || c.TraceDepth > 10 {
@@ -381,6 +424,8 @@ func configRequiresRestart(oldCfg, newCfg *Config) bool {
 	if oldCfg.FlushIntervalMs != newCfg.FlushIntervalMs ||
 		oldCfg.DiskCheckIntervalMs != newCfg.DiskCheckIntervalMs ||
 		oldCfg.EnableAdaptiveInterval != newCfg.EnableAdaptiveInterval ||
+		oldCfg.MinCheckIntervalMs != newCfg.MinCheckIntervalMs ||
+		oldCfg.MaxCheckIntervalMs != newCfg.MaxCheckIntervalMs ||
 		oldCfg.HeartbeatIntervalS != newCfg.HeartbeatIntervalS ||
 		oldCfg.HeartbeatLevel != newCfg.HeartbeatLevel ||
 		oldCfg.RetentionCheckMins != newCfg.RetentionCheckMins ||

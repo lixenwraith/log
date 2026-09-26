@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -25,12 +26,14 @@ func getTrace(depth int64, skip int) string {
 	count := 0
 	for {
 		frame, more := frames.Next()
-		if !more || count >= int(depth) {
+		if count >= int(depth) {
 			break
 		}
 		funcName := filepath.Base(frame.Function)
-		parts := strings.Split(funcName, ".")
-		lastPart := parts[len(parts)-1]
+		prefix, lastPart, found := strings.CutLast(funcName, ".")
+		if !found {
+			lastPart = funcName
+		}
 		if strings.HasPrefix(lastPart, "func") {
 			isAnonymous := true
 			for _, r := range lastPart[4:] {
@@ -40,7 +43,7 @@ func getTrace(depth int64, skip int) string {
 				}
 			}
 			if isAnonymous && len(lastPart) > 4 {
-				funcName = fmt.Sprintf("(anonymous in %s)", strings.Join(parts[:len(parts)-1], "."))
+				funcName = fmt.Sprintf("(anonymous in %s)", prefix)
 			} else {
 				funcName = lastPart
 			}
@@ -49,14 +52,15 @@ func getTrace(depth int64, skip int) string {
 		}
 		trace = append(trace, funcName)
 		count++
+		if !more {
+			break
+		}
 	}
 	if len(trace) == 0 {
 		return "(unknown)"
 	}
 	// Reverse for caller -> callee order
-	for i, j := 0, len(trace)-1; i < j; i, j = i+1, j-1 {
-		trace[i], trace[j] = trace[j], trace[i]
-	}
+	slices.Reverse(trace)
 	return strings.Join(trace, " -> ")
 }
 

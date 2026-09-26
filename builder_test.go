@@ -137,4 +137,3 @@ func TestBuilderDefaults(t *testing.T) {
 	equal(t, cfg.BufferSize, def.BufferSize, "BufferSize")
 	equal(t, cfg.Sanitization, def.Sanitization, "Sanitization")
 }
-

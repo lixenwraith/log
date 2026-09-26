@@ -1,39 +1,13 @@
 package log
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
-
-// // procRecords parses PROC heartbeat records out of json-formatted content.
-// // Heartbeat arguments are emitted as a flat key/value array.
-// func procRecords(tb testing.TB, content string) []map[string]any {
-// 	tb.Helper()
-// 	var out []map[string]any
-// 	for _, line := range strings.Split(content, "\n") {
-// 		if !strings.Contains(line, `"level":"PROC"`) {
-// 			continue
-// 		}
-// 		var entry map[string]any
-// 		if json.Unmarshal([]byte(line), &entry) != nil {
-// 			continue
-// 		}
-// 		fields, ok := entry["fields"].([]any)
-// 		if !ok {
-// 			continue
-// 		}
-// 		rec := make(map[string]any, len(fields)/2)
-// 		for i := 0; i+1 < len(fields); i += 2 {
-// 			if key, ok := fields[i].(string); ok {
-// 				rec[key] = fields[i+1]
-// 			}
-// 		}
-// 		out = append(out, rec)
-// 	}
-// 	return out
-// }
 
 // procRecords parses PROC heartbeat records out of json-formatted content.
 // Heartbeat arguments are emitted as a keyed object (FlagKV); the flat
@@ -100,178 +74,101 @@ func TestLoggerHeartbeat(t *testing.T) {
 
 // TestHeartbeatDisabled verifies level 0 emits nothing.
 func TestHeartbeatDisabled(t *testing.T) {
-	logger, tmpDir := newTestLogger(t)
-
-	cfg := logger.GetConfig()
-	cfg.Format = "json"
-	cfg.HeartbeatLevel = 0
-	cfg.HeartbeatIntervalS = 1
-	mustNoErr(t, logger.ApplyConfig(cfg), "ApplyConfig")
-
-	logger.Info("marker")
-	mustNoErr(t, logger.Flush(time.Second), "Flush")
-	time.Sleep(1200 * time.Millisecond) // span at least one interval
-
-	content := readLog(t, tmpDir)
-	contains(t, content, "marker", "regular record")
-	notContains(t, content, `"level":"PROC"`, "proc heartbeat")
-	equal(t, logger.state.HeartbeatSequence.Load(), uint64(0), "HeartbeatSequence")
+	synctest.Test(t, func(t *testing.T) {
+		l, out := memoryHeartbeatLogger(t, 0)
+		mustNoErr(t, l.Start(), "start")
+		synctest.Sleep(2 * time.Second)
+		l.Info("marker")
+		mustNoErr(t, l.Flush(time.Second), "flush")
+		contains(t, out.String(), "marker", "ordinary record")
+		notContains(t, out.String(), `"level":"PROC"`, "disabled heartbeat")
+		equal(t, l.state.HeartbeatSequence.Load(), uint64(0), "no heartbeat sequence")
+		mustNoErr(t, l.Shutdown(time.Second), "shutdown")
+	})
 }
 
-// TestDroppedLogs verifies buffer overflow is counted and reported by the heartbeat.
+func memoryHeartbeatLogger(t *testing.T, level int64) (*Logger, *bytes.Buffer) {
+	t.Helper()
+	l := NewLogger()
+	c := DefaultConfig()
+	c.Format = "json"
+	c.HeartbeatLevel = level
+	c.HeartbeatIntervalS = 1
+	c.BufferSize = 1
+	mustNoErr(t, l.ApplyConfig(c), "apply")
+	out := new(bytes.Buffer)
+	l.state.StdoutWriter.Store(&sink{w: out})
+	return l, out
+}
+
+// The processor cannot start until the flood is complete, making overflow exact.
 func TestDroppedLogs(t *testing.T) {
-	logger := NewLogger()
-
-	cfg := DefaultConfig()
-	cfg.Directory = t.TempDir()
-	cfg.EnableConsole = false
-	cfg.EnableFile = true
-	cfg.Format = "json"
-	cfg.BufferSize = 1 // guarantees drops under flood
-	cfg.FlushIntervalMs = 10
-	cfg.HeartbeatLevel = 1
-	cfg.HeartbeatIntervalS = 1
-
-	mustNoErr(t, logger.ApplyConfig(cfg), "ApplyConfig")
-	mustNoErr(t, logger.Start(), "Start")
-	t.Cleanup(func() { _ = logger.Shutdown() })
-
-	for i := range 100 {
-		logger.Info("flood", i)
-	}
-
-	dropped := logger.state.TotalDroppedLogs.Load()
-	if dropped == 0 {
-		t.Fatal("flood produced no drops")
-	}
-
-	// The interval counter is reported only when non-zero, so wait for the
-	// tick-driven heartbeat that follows the flood
-	mustEventually(t, 5*time.Second, "heartbeat reporting interval drops", func() bool {
-		for _, rec := range procRecords(t, readLog(t, cfg.Directory)) {
-			if _, ok := rec["dropped_since_last"]; ok {
-				return true
-			}
+	synctest.Test(t, func(t *testing.T) {
+		l, out := memoryHeartbeatLogger(t, 1)
+		release := make(chan struct{})
+		l.SetSpawn(func(fn func()) { go func() { <-release; fn() }() })
+		mustNoErr(t, l.Start(), "start")
+		for i := range 100 {
+			l.Info("flood", i)
 		}
-		return false
+		equal(t, l.state.TotalDroppedLogs.Load(), uint64(99), "exact overflow")
+		close(release)
+		synctest.Wait()
+		// The initial heartbeat encounters the full queue and adds one more drop.
+		synctest.Sleep(time.Second)
+		records := procRecords(t, out.String())
+		mustEqual(t, len(records), 1, "tick heartbeat")
+		equal(t, numField(records[0], "total_dropped_logs"), float64(100), "includes dropped initial heartbeat")
+		equal(t, numField(records[0], "processed_logs"), float64(1), "excludes heartbeats")
+		mustNoErr(t, l.Shutdown(time.Second), "shutdown")
 	})
-
-	records := procRecords(t, readLog(t, cfg.Directory))
-	last := records[len(records)-1]
-	if got := numField(last, "total_dropped_logs"); got < float64(dropped) {
-		t.Errorf("total_dropped_logs %v below observed drops %d", got, dropped)
-	}
 }
 
-// TestDroppedHeartbeatAccounting verifies a heartbeat discarded by the processor
-// during a disk failure is still reflected in the total drop count reported by
-// the next successful heartbeat.
 func TestDroppedHeartbeatAccounting(t *testing.T) {
-	logger := NewLogger()
-
-	cfg := DefaultConfig()
-	cfg.Directory = t.TempDir()
-	cfg.EnableConsole = false
-	cfg.EnableFile = true
-	cfg.Format = "json"
-	cfg.BufferSize = 10
-	cfg.HeartbeatLevel = 1
-	cfg.HeartbeatIntervalS = 1
-	cfg.InternalErrorsToStderr = false // internal logs would add drops
-
-	mustNoErr(t, logger.ApplyConfig(cfg), "ApplyConfig")
-	mustNoErr(t, logger.Start(), "Start")
-	t.Cleanup(func() { _ = logger.Shutdown() })
-
-	// Drops during the flood are nondeterministic; capture the actual count
-	for i := range int(cfg.BufferSize) + 50 {
-		logger.Info("flood", i)
-	}
-	floodDrops := logger.state.TotalDroppedLogs.Load()
-	if floodDrops == 0 {
-		t.Fatal("flood produced no drops")
-	}
-
-	// Let the first tick-driven heartbeat consume the interval counter
-	mustEventually(t, 3*time.Second, "first tick heartbeat", func() bool {
-		return logger.state.HeartbeatSequence.Load() >= 2
-	})
-
-	// Force the disk-unavailable state; the processor discards every record
-	diskFull := logger.GetConfig()
-	diskFull.MinDiskFreeKB = 1 << 40
-	mustNoErr(t, logger.ApplyConfig(diskFull), "ApplyConfig disk full")
-	isFalse(t, logger.performDiskCheck(true), "performDiskCheck under disk full")
-	isFalse(t, logger.state.DiskStatusOK.Load(), "DiskStatusOK")
-
-	// Hold the failure until a heartbeat has been produced and discarded
-	seq := logger.state.HeartbeatSequence.Load()
-	mustEventually(t, 3*time.Second, "heartbeat produced while disk full", func() bool {
-		return logger.state.HeartbeatSequence.Load() > seq
-	})
-	droppedWithDiskFull := logger.state.TotalDroppedLogs.Load()
-	if droppedWithDiskFull <= floodDrops {
-		t.Fatalf("processor did not drop during disk failure: %d", droppedWithDiskFull)
-	}
-
-	// Restore and wait for a heartbeat that reaches the file
-	diskOK := logger.GetConfig()
-	diskOK.MinDiskFreeKB = 0
-	mustNoErr(t, logger.ApplyConfig(diskOK), "ApplyConfig disk ok")
-	isTrue(t, logger.performDiskCheck(true), "performDiskCheck after recovery")
-	isTrue(t, logger.state.DiskStatusOK.Load(), "DiskStatusOK after recovery")
-
-	seq = logger.state.HeartbeatSequence.Load()
-	mustEventually(t, 4*time.Second, "heartbeat written after recovery", func() bool {
-		if logger.state.HeartbeatSequence.Load() <= seq {
-			return false
-		}
-		records := procRecords(t, readLog(t, cfg.Directory))
-		if len(records) == 0 {
-			return false
-		}
-		return numField(records[len(records)-1], "sequence") > float64(seq)
-	})
-
-	records := procRecords(t, readLog(t, cfg.Directory))
-	last := records[len(records)-1]
-
-	// The dropped heartbeat is unrecoverable in the interval counter but must
-	// remain visible in the monotonic total
-	if got := numField(last, "total_dropped_logs"); got < float64(droppedWithDiskFull) {
-		t.Errorf("total_dropped_logs %v does not cover drops observed during failure %d",
-			got, droppedWithDiskFull)
-	}
-	if got := numField(last, "processed_logs"); got == 0 {
-		t.Error("processed_logs must be non-zero after recovery")
-	}
+	l := NewLogger()
+	c := DefaultConfig()
+	c.EnableConsole = false
+	c.EnableFile = true
+	c.Directory = t.TempDir()
+	c.Format = "json"
+	mustNoErr(t, l.ApplyConfig(c), "apply")
+	defer l.Shutdown()
+	ch := make(chan logRecord, 1)
+	l.state.ActiveLogChannel.Store(ch)
+	l.processLogRecord(logRecord{Args: []any{"application record"}})
+	l.state.DiskStatusOK.Store(false)
+	l.logProcHeartbeat()
+	l.processLogRecord(<-ch)
+	equal(t, l.state.TotalDroppedLogs.Load(), uint64(1), "dropped heartbeat")
+	l.state.DiskStatusOK.Store(true)
+	l.logProcHeartbeat()
+	l.processLogRecord(<-ch)
+	records := procRecords(t, readLog(t, c.Directory))
+	mustEqual(t, len(records), 1, "recovery heartbeat")
+	equal(t, numField(records[0], "total_dropped_logs"), float64(1), "persistent drops")
+	equal(t, numField(records[0], "dropped_since_last"), float64(1), "interval drops")
+	equal(t, l.state.TotalLogsProcessed.Load(), uint64(1), "heartbeat excluded from processed count")
 }
 
-// TestAdaptiveDiskCheck exercises interval adjustment under varying log rates.
 func TestAdaptiveDiskCheck(t *testing.T) {
-	logger, _ := newTestLogger(t)
-
-	cfg := logger.GetConfig()
-	cfg.EnableAdaptiveInterval = true
-	cfg.DiskCheckIntervalMs = 100
-	cfg.MinCheckIntervalMs = 50
-	cfg.MaxCheckIntervalMs = 500
-	mustNoErr(t, logger.ApplyConfig(cfg), "ApplyConfig")
-
-	// Low rate, then burst: both adjustment branches
-	for i := range 10 {
-		logger.Info("adaptive test", i)
-		time.Sleep(10 * time.Millisecond)
-	}
-	for i := range 100 {
-		logger.Info("burst", i)
-	}
-	mustNoErr(t, logger.Flush(2*time.Second), "Flush")
-
-	isTrue(t, logger.state.DiskStatusOK.Load(), "DiskStatusOK")
-	if logger.state.TotalLogsProcessed.Load() == 0 {
-		t.Error("no records processed")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		l := NewLogger()
+		c := DefaultConfig()
+		c.DiskCheckIntervalMs = 100
+		c.MinCheckIntervalMs = 50
+		c.MaxCheckIntervalMs = 500
+		mustNoErr(t, l.ApplyConfig(c), "apply")
+		timers := l.setupProcessingTimers()
+		defer l.stopProcessingTimers(timers)
+		for range 8 {
+			l.adjustDiskCheckInterval(timers, time.Now().Add(-time.Second), 0)
+		}
+		equal(t, timers.diskInterval, 500*time.Millisecond, "repeated low load reaches maximum")
+		for range 16 {
+			l.adjustDiskCheckInterval(timers, time.Now().Add(-time.Second), 1000)
+		}
+		equal(t, timers.diskInterval, 50*time.Millisecond, "repeated high load reaches minimum")
+	})
 }
 
 // TestFlushBarrier verifies records enqueued before Flush are written before it returns.

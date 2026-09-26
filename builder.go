@@ -1,6 +1,9 @@
 package log
 
 import (
+	"math"
+	"slices"
+
 	"github.com/lixenwraith/log/sanitizer"
 )
 
@@ -23,7 +26,7 @@ func NewBuilder() *Builder {
 // ContextKeys names the record keys for Context values
 func (b *Builder) ContextKeys(tag string, vals ...string) *Builder {
 	b.ctxTag = tag
-	b.ctxVals = vals
+	b.ctxVals = slices.Clone(vals)
 	return b
 }
 
@@ -67,7 +70,7 @@ func (b *Builder) LevelString(level string) *Builder {
 	return b
 }
 
-// Name sets the log level
+// Name sets the base filename
 func (b *Builder) Name(name string) *Builder {
 	b.cfg.Name = name
 	return b
@@ -91,7 +94,7 @@ func (b *Builder) Sanitization(policy sanitizer.PolicyPreset) *Builder {
 	return b
 }
 
-// Extension sets the log level
+// Extension sets the filename extension without a leading dot
 func (b *Builder) Extension(ext string) *Builder {
 	b.cfg.Extension = ext
 	return b
@@ -111,6 +114,10 @@ func (b *Builder) MaxSizeKB(size int64) *Builder {
 
 // MaxSizeMB sets the maximum log file size in MB
 func (b *Builder) MaxSizeMB(size int64) *Builder {
+	if size < 0 || size > math.MaxInt64/(sizeMultiplier*sizeMultiplier) {
+		b.err = fmtErrorf("size in MB is out of range: %d", size)
+		return b
+	}
 	b.cfg.MaxSizeKB = size * sizeMultiplier
 	return b
 }
@@ -127,7 +134,7 @@ func (b *Builder) HeartbeatLevel(level int64) *Builder {
 	return b
 }
 
-// HeartbeatIntervalS sets the heartbeat monitoring level
+// HeartbeatIntervalS sets the heartbeat interval in seconds
 func (b *Builder) HeartbeatIntervalS(interval int64) *Builder {
 	b.cfg.HeartbeatIntervalS = interval
 	return b
@@ -159,6 +166,10 @@ func (b *Builder) MaxTotalSizeKB(size int64) *Builder {
 
 // MaxTotalSizeMB sets the maximum total size of all log files in MB
 func (b *Builder) MaxTotalSizeMB(size int64) *Builder {
+	if size < 0 || size > math.MaxInt64/(sizeMultiplier*sizeMultiplier) {
+		b.err = fmtErrorf("size in MB is out of range: %d", size)
+		return b
+	}
 	b.cfg.MaxTotalSizeKB = size * sizeMultiplier
 	return b
 }
@@ -171,6 +182,10 @@ func (b *Builder) MinDiskFreeKB(size int64) *Builder {
 
 // MinDiskFreeMB sets the minimum required free disk space in MB
 func (b *Builder) MinDiskFreeMB(size int64) *Builder {
+	if size < 0 || size > math.MaxInt64/(sizeMultiplier*sizeMultiplier) {
+		b.err = fmtErrorf("size in MB is out of range: %d", size)
+		return b
+	}
 	b.cfg.MinDiskFreeKB = size * sizeMultiplier
 	return b
 }
@@ -259,6 +274,7 @@ func (b *Builder) EnableConsole(enable bool) *Builder {
 // if err == nil {
 //
 //	 defer logger.Shutdown()
+//	 if err := logger.Start(); err != nil { return }
 //	 logger.Info("Logger initialized successfully")
 //
 // }

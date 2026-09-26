@@ -1,6 +1,6 @@
 # Log
 
-[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://golang.org)
+[![Go](https://img.shields.io/badge/Go-1.27.1+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 [![Documentation](https://img.shields.io/badge/Docs-Available-green.svg)](doc/)
 
@@ -8,10 +8,10 @@ A high-performance, buffered, rotating file logger for Go applications with buil
 
 ## Key Features
 
-- **Lock-free async logging** with minimal application impact
+- **Buffered async logging** with minimal application impact
 - **Automatic file rotation** and disk space management
 - **Operational heartbeats** for production monitoring
-- **Hot reconfiguration** without data loss
+- **Hot reconfiguration** with draining on restart
 - **Framework adapters** for gnet v2, fasthttp, Fiber v2
 - **Production-grade reliability** with graceful shutdown
 
@@ -29,7 +29,7 @@ import (
 func main() {
     // Create and initialize logger
     logger := log.NewLogger()
-    err := logger.ApplyConfigString("directory=/var/log/myapp")
+    err := logger.ApplyConfigString("directory=/var/log/myapp", "enable_file=true", "format=txt")
     if err != nil {
         panic(fmt.Errorf("failed to apply logger config: %w", err))
     }
@@ -59,21 +59,17 @@ go get github.com/lixenwraith/log
 - **[Configuration Builder](doc/builder.md)** - Builder pattern guide
 - **[API Reference](doc/api.md)** - Complete API documentation
 - **[Logging Guide](doc/logging.md)** - Logging methods and best practices
-+ **[Formatting & Sanitization](doc/formatting.md)** - Standalone formatter and sanitizer packages
+- **[Formatting & Sanitization](doc/formatting.md)** - Standalone formatter and sanitizer packages
 - **[Disk Management](doc/storage.md)** - File rotation and cleanup
 - **[Heartbeat Monitoring](doc/heartbeat.md)** - Operational statistics
 - **[Compatibility Adapters](doc/adapters.md)** - Framework integrations
-- **[Quick Guide](doc/quick-guide_lixenwraith_log.md)** - Quick reference guide
+- **[Testing and Performance](doc/testing.md)** - Race, stress, fuzz, and benchmark commands
 
 ## Architecture Overview
 
-The logger uses a lock-free, channel-based architecture for high performance:
+Applications enqueue records into a bounded channel. A single background processor formats records, writes output, rotates files, and performs cleanup. A short read lock coordinates enqueues with lifecycle changes; producers never wait for queue capacity or output I/O. Full queues drop records and increment counters.
 
-```
-Application → Log Methods → Buffered Channel → Background Processor → File/Console
-                ↓                                      ↓
-            (non-blocking)                    (rotation, cleanup, monitoring)
-```
+Call `ApplyConfig` (or `Build`) and then `Start` before logging. `Stop` drains accepted records and can be followed by `Start`. `Shutdown` also closes the file; after a timeout, retry it to finish cleanup. See the [API reference](doc/api.md) for ownership and concurrency rules.
 
 ## Contributing
 
