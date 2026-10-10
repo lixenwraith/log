@@ -390,7 +390,7 @@ Logger methods support concurrent calls. Lifecycle and configuration changes are
 
 `ApplyConfig` takes a snapshot. Emission copies the argument slice, and `LogStructured` also copies the top-level fields map. Referenced values (byte slices, nested maps/slices, pointers, Stringers, and custom marshalers) remain caller-owned: keep them immutable until a successful `Flush` or `Stop`, or pass an application-created snapshot. Do not mutate configuration while an `ApplyConfig` call is reading it.
 
-Builders and standalone formatter/sanitizer configuration are not synchronized; finish configuration before sharing. `SetSpawn` callbacks must launch the function asynchronously and return promptly. Error handlers must return promptly and must not invoke lifecycle/configuration methods or `Flush`.
+Builders and standalone formatter/sanitizer configuration are not synchronized; finish configuration before sharing. `SetSpawn` callbacks must launch the function asynchronously and return promptly. Error handlers and `SetConsoleWriter` writers must return promptly and must not invoke lifecycle/configuration methods or `Flush`.
 
 ### Usage Pattern Example
 

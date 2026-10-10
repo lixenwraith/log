@@ -26,7 +26,7 @@ type State struct {
 
 	// Outputs
 	CurrentFile  atomic.Value // stores *os.File
-	StdoutWriter atomic.Value // stores io.Writer (os.Stdout, os.Stderr, or io.Discard)
+	StdoutWriter atomic.Value // stores *sink, the console writers
 
 	// File State
 	CurrentSize      atomic.Int64 // Size of the current log file

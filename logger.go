@@ -22,6 +22,7 @@ type Logger struct {
 	ctxKeys       atomic.Pointer[formatter.ContextKeys]
 	spawner       atomic.Pointer[func(func())]
 	errHandler    atomic.Pointer[func(string)]
+	consoleW      io.Writer // SetConsoleWriter's writer, under initMu
 	state         State
 	initMu        sync.Mutex   // serializes lifecycle and configuration changes
 	sendMu        sync.RWMutex // joins enqueues before detaching a processor
@@ -185,14 +186,7 @@ func (l *Logger) applyConfig(cfg *Config) error {
 		}
 	}
 
-	var writer io.Writer = io.Discard
-	if cfg.EnableConsole {
-		writer = os.Stdout
-		if cfg.ConsoleTarget == "stderr" {
-			writer = os.Stderr
-		}
-	}
-	l.state.StdoutWriter.Store(&sink{w: writer})
+	l.storeConsole(cfg)
 	l.currentConfig.Store(cfg)
 	l.rebuildFormatter(cfg)
 	l.state.Flags.Store(flagsFromConfig(cfg))
@@ -380,6 +374,34 @@ func (l *Logger) SetErrorHandler(fn func(string)) {
 		return
 	}
 	l.errHandler.Store(&fn)
+}
+
+// SetConsoleWriter sends console output to w instead of stdout and stderr,
+// for every console_target, split included; nil restores them. It holds across
+// ApplyConfig and is safe while logging. Writes must return promptly and must
+// not call lifecycle/configuration methods or Flush, as for SetErrorHandler.
+func (l *Logger) SetConsoleWriter(w io.Writer) {
+	l.initMu.Lock()
+	defer l.initMu.Unlock()
+	l.consoleW = w
+	l.storeConsole(l.getConfig())
+}
+
+// storeConsole publishes the writers the processor uses for cfg's console output
+func (l *Logger) storeConsole(cfg *Config) {
+	w, warn := l.consoleW, l.consoleW
+	switch {
+	case !cfg.EnableConsole:
+		w, warn = io.Discard, io.Discard
+	case w != nil:
+	case cfg.ConsoleTarget == "stderr":
+		w, warn = os.Stderr, os.Stderr
+	case cfg.ConsoleTarget == "split":
+		w, warn = os.Stdout, os.Stderr
+	default:
+		w, warn = os.Stdout, os.Stdout
+	}
+	l.state.StdoutWriter.Store(&sink{w: w, warn: warn})
 }
 
 // SetContextKeys names the record keys for Context values; empty names are

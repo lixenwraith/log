@@ -146,7 +146,7 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 		if target, _ := l.state.StdoutWriter.Load().(*sink); target != nil {
 			writer := target.w
 			if c.ConsoleTarget == "split" && record.Level >= LevelWarn {
-				writer = os.Stderr
+				writer = target.warn
 			}
 			n, err := writer.Write(formattedData)
 			if err == nil && n != len(formattedData) {

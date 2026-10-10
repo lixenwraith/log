@@ -1,6 +1,8 @@
 package log
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -202,27 +204,51 @@ func TestLoggerConcurrency(t *testing.T) {
 	}
 }
 
-// TestLoggerConsoleTargets verifies console-only operation for each target.
-func TestLoggerConsoleTargets(t *testing.T) {
+// TestConsoleWriterTakesEveryTarget verifies each console target, split's warn
+// records included, writes to a console writer set before ApplyConfig.
+func TestConsoleWriterTakesEveryTarget(t *testing.T) {
 	for _, target := range []string{"stdout", "stderr", "split"} {
 		t.Run(target, func(t *testing.T) {
+			var out bytes.Buffer
 			logger := NewLogger()
+			logger.SetConsoleWriter(&out)
 			cfg := DefaultConfig()
-			cfg.Directory = t.TempDir()
 			cfg.EnableConsole = true
 			cfg.EnableFile = false
 			cfg.ConsoleTarget = target
 
 			mustNoErr(t, logger.ApplyConfig(cfg), "ApplyConfig")
 			mustNoErr(t, logger.Start(), "Start")
-			t.Cleanup(func() { _ = logger.Shutdown() })
-
-			// split routes >=WARN to stderr; exercise both branches
 			logger.Info("console info")
 			logger.Error("console error")
-			noErr(t, logger.Flush(time.Second), "Flush")
+			mustNoErr(t, logger.Shutdown(time.Second), "Shutdown")
+			contains(t, out.String(), "console info", "info record")
+			contains(t, out.String(), "console error", "error record")
 		})
 	}
+}
+
+// TestConsoleWriterNilRestoresTarget verifies nil returns a running logger's
+// console output to the configured stdout and stderr.
+func TestConsoleWriterNilRestoresTarget(t *testing.T) {
+	var out bytes.Buffer
+	logger := NewLogger()
+	cfg := DefaultConfig()
+	cfg.EnableFile = false
+	cfg.ConsoleTarget = "split"
+	mustNoErr(t, logger.ApplyConfig(cfg), "ApplyConfig")
+	mustNoErr(t, logger.Start(), "Start")
+	t.Cleanup(func() { _ = logger.Shutdown() })
+
+	logger.SetConsoleWriter(&out)
+	logger.Info("redirected")
+	mustNoErr(t, logger.Flush(time.Second), "Flush")
+	contains(t, out.String(), "redirected", "record after SetConsoleWriter")
+
+	logger.SetConsoleWriter(nil)
+	got := logger.state.StdoutWriter.Load().(*sink)
+	equal(t, got.w, io.Writer(os.Stdout), "below warn")
+	equal(t, got.warn, io.Writer(os.Stderr), "warn and above")
 }
 
 // TestLoggerWrite verifies Write emits raw bytes with no formatting, framing, or sanitization.

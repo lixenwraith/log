@@ -71,6 +71,8 @@ Applications enqueue records into a bounded channel. A single background process
 
 Call `ApplyConfig` (or `Build`) and then `Start` before logging. `Stop` drains accepted records and can be followed by `Start`. `Shutdown` also closes the file; after a timeout, retry it to finish cleanup. See the [API reference](doc/api.md) for ownership and concurrency rules.
 
+Hosts that own the terminal, such as TUIs, route console output with `SetConsoleWriter` and internal diagnostics with `SetErrorHandler`.
+
 ## Contributing
 
 Contributions and suggestions are welcome!

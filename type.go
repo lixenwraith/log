@@ -35,9 +35,11 @@ type TimerSet struct {
 	diskInterval    time.Duration
 }
 
-// sink is a wrapper around an io.Writer, atomic value type change workaround
+// sink holds the console writers in one atomic.Value; warn takes split's
+// warn-and-above records
 type sink struct {
-	w io.Writer
+	w    io.Writer
+	warn io.Writer
 }
 
 // flushRequest belongs to one processor generation; the buffered reply permits
