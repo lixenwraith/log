@@ -61,12 +61,13 @@ logger.ApplyConfigString(
 
 **Additional Output:**
 ```
-2024-01-15T10:30:00Z DISK type=disk sequence=1 rotated_files=12 deleted_files=5 total_log_size_mb="487.32" log_file_count=8 current_file_size_mb="23.45" disk_status_ok=true disk_free_mb="5234.67"
+2024-01-15T10:30:00Z DISK type=disk sequence=1 rotated_files=12 deleted_files=5 reopened_files=1 total_log_size_mb="487.32" log_file_count=8 current_file_size_mb="23.45" disk_status_ok=true disk_free_mb="5234.67"
 ```
 
 **Additional Fields:**
 - `rotated_files`: Total file rotations
 - `deleted_files`: Files removed by cleanup
+- `reopened_files`: Log paths opened again after an external rename or removal
 - `total_log_size_mb`: Size of all log files
 - `log_file_count`: Number of log files
 - `current_file_size_mb`: Active file size

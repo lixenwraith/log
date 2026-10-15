@@ -17,12 +17,26 @@ logger.ApplyConfigString(
 ### Rotation Behavior
 
 1. Before each write, the logger checks whether the active file would exceed `max_size_kb`.
-2. It closes the active `{name}.{extension}` file and renames it to `{name}_{YYMMDD}_{HHMMSS}[_N].{extension}`.
+2. It closes the active `{name}.{extension}` file and renames it to `{name}_{YYMMDD}_{HHMMSS}[_N].{extension}`; a file already removed leaves nothing to archive.
 3. It opens a new active file. A counter suffix avoids existing names when rotations share a second.
 
 For example: `myapp.log` becomes `myapp_240115_143022.log`, then `myapp_240115_143022_1.log` on the next collision. Rotation does not split a record, so a single oversized record can exceed the size limit. File errors can drop records and are counted. Periodic sync, explicit `Flush`, and shutdown provide sync points; closing a file alone does not guarantee crash durability.
 
-Use a directory owned exclusively by this logger. Cleanup and retention select regular files by extension, including files from earlier runs with different base names. They exclude the active filename, directories, and symlinks. With an empty extension, only extensionless files match. Console-only configurations never perform retention deletion. Total-size and free-space limits are checked periodically and can be exceeded between checks.
+Use a directory owned exclusively by this logger. Cleanup and retention select regular files by extension, including files from earlier runs with different base names. They exclude the active filename, the file being written under any name, directories, and symlinks. With an empty extension, only extensionless files match. Console-only configurations never perform retention deletion. Total-size and free-space limits are checked periodically and can be exceeded between checks.
+
+### External Edits and Rotation
+
+The logger writes with `O_APPEND` to whatever file its path names. It checks the path at most once per 10 ms of record time, and at every `Flush`, at `Stop` and before a size rotation.
+
+- Edited in place: `truncate -s 0`, `: > app.log`, nano, `echo note >> app.log`, logrotate `copytruncate`.
+  - The next record lands at the new end of the file; the tracked size is re-read at each check.
+- Replaced, removed or moved: vim (it saves by renaming), `sed -i`, `perl -i`, `rm`, `mv`, logrotate `create`.
+  - The path is opened again, and created if missing; no signal or reopen call is needed.
+  - Records written between the change and that check go to the old file: lost with a removed file, kept in a moved one.
+  - On unix the reopen never follows a symlink and keeps only a regular file. A refusal is reported once as an internal error (`SetErrorHandler`, or stderr with `internal_errors_to_stderr`), and the old handle stays in use until the path is usable. The first open in `ApplyConfig` still follows a symlinked path.
+  - On Windows the open file cannot be renamed or removed while the logger holds it.
+  - Disk heartbeats count reopens as `reopened_files`.
+- Not preventable by a writer: an editor saves the snapshot it read, overwriting records logged while it had the file open (vim and nano warn first). A note without a final newline joins the next record's line.
 
 ## Disk Space Management
 
@@ -149,7 +163,7 @@ logger.ApplyConfigString(
 
 Output:
 ```
-2024-01-15T10:30:00Z DISK type="disk" sequence=1 rotated_files=5 deleted_files=2 total_log_size_mb="487.32" log_file_count=8 current_file_size_mb="23.45" disk_status_ok=true disk_free_mb="5234.67"
+2024-01-15T10:30:00Z DISK type="disk" sequence=1 rotated_files=5 deleted_files=2 reopened_files=0 total_log_size_mb="487.32" log_file_count=8 current_file_size_mb="23.45" disk_status_ok=true disk_free_mb="5234.67"
 ```
 
 ## Manual Recovery

@@ -55,6 +55,9 @@ const (
 const (
 	// Minimum wait time used throughout the package
 	minWaitTime = 10 * time.Millisecond
+	// Record time between checks that the log path still names the open file;
+	// bounds the writes lost to a file replaced or removed under the logger
+	fileCheckInterval = 10 * time.Millisecond
 	// Factors to adjust check interval
 	adaptiveIntervalFactor float64 = 1.5 // Slow down
 	adaptiveSpeedUpFactor  float64 = 0.8 // Speed up

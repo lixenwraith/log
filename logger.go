@@ -27,6 +27,7 @@ type Logger struct {
 	initMu        sync.Mutex   // serializes lifecycle and configuration changes
 	sendMu        sync.RWMutex // joins enqueues before detaching a processor
 	processorErr  error        // written by processor, read only after ProcDone closes
+	watch         fileWatch    // processor goroutine only
 }
 
 // levelOff closes the emit gate without touching configuration

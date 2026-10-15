@@ -45,4 +45,5 @@ type State struct {
 	TotalLogsProcessed atomic.Uint64 // Counter for non-heartbeat logs successfully processed
 	TotalRotations     atomic.Uint64 // Counter for successful log rotations
 	TotalDeletions     atomic.Uint64 // Counter for successful log deletions (cleanup/retention)
+	TotalReopens       atomic.Uint64 // Counter for log paths reopened after an external rename or removal
 }

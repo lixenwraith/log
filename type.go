@@ -2,6 +2,7 @@ package log
 
 import (
 	"io"
+	"os"
 	"time"
 
 	"github.com/lixenwraith/log/formatter"
@@ -33,6 +34,16 @@ type TimerSet struct {
 	retentionChan   <-chan time.Time
 	heartbeatChan   <-chan time.Time
 	diskInterval    time.Duration
+}
+
+// fileWatch records which file the processor's handle refers to. Holding file
+// keeps its address from being reused by a later handle. Processor only.
+type fileWatch struct {
+	file      *os.File    // handle info was taken from
+	info      os.FileInfo // identity of file
+	path      string      // log path for file; it changes only with a new file
+	lastCheck time.Time   // record time of the last path check
+	warned    bool        // a refused or failed reopen was reported
 }
 
 // sink holds the console writers in one atomic.Value; warn takes split's

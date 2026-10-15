@@ -8,6 +8,9 @@ import (
 	"syscall"
 )
 
+// reopenFlags open the log path again; see openLogPath
+const reopenFlags = os.O_APPEND | os.O_CREATE | os.O_WRONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
+
 // getDiskFreeSpace retrieves available disk space for the given path
 func (l *Logger) getDiskFreeSpace(path string) (int64, error) {
 	var stat syscall.Statfs_t

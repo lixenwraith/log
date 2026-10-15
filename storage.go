@@ -1,7 +1,9 @@
 package log
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -175,13 +177,14 @@ func (l *Logger) cleanOldLogs(required int64) error {
 		modTime time.Time
 		size    int64
 	}
+	active := l.openFileInfo()
 	var logs []logFileMeta
 	for _, entry := range entries {
 		if !matchesLogEntry(entry, ext) || entry.Name() == staticLogName {
 			continue
 		}
 		info, errInfo := entry.Info()
-		if errInfo != nil {
+		if errInfo != nil || os.SameFile(info, active) {
 			continue
 		}
 		logs = append(logs, logFileMeta{name: entry.Name(), modTime: info.ModTime(), size: info.Size()})
@@ -292,12 +295,13 @@ func (l *Logger) cleanExpiredLogs(oldest time.Time) error {
 		staticLogName = name + "." + ext
 	}
 
+	active := l.openFileInfo()
 	for _, entry := range entries {
 		if !matchesLogEntry(entry, ext) || entry.Name() == staticLogName {
 			continue
 		}
 		info, errInfo := entry.Info()
-		if errInfo != nil {
+		if errInfo != nil || os.SameFile(info, active) {
 			continue
 		}
 		if info.ModTime().Before(cutoffTime) {
@@ -310,6 +314,17 @@ func (l *Logger) cleanExpiredLogs(oldest time.Time) error {
 		}
 	}
 
+	return nil
+}
+
+// openFileInfo identifies the file being written; cleanup spares it under any
+// name, as it may have been renamed since the last path check
+func (l *Logger) openFileInfo() os.FileInfo {
+	if file, _ := l.state.CurrentFile.Load().(*os.File); file != nil {
+		if info, err := file.Stat(); err == nil {
+			return info
+		}
+	}
 	return nil
 }
 
@@ -353,11 +368,6 @@ func (l *Logger) generateArchiveLogFileName(timestamp time.Time) string {
 	return name
 }
 
-// createNewLogFile opens the active log file in append mode
-func (l *Logger) createNewLogFile() (*os.File, error) {
-	return openLogFile(l.getConfig())
-}
-
 func openLogFile(c *Config) (*os.File, error) {
 	name := c.Name
 	if c.Extension != "" {
@@ -371,35 +381,93 @@ func openLogFile(c *Config) (*os.File, error) {
 	return file, nil
 }
 
+// openLogPath opens the log path again after a rotation or an external change.
+// Unlike the configured first open it never follows a symlink, never blocks on
+// a FIFO, and keeps only a regular file: the path may have been replaced.
+func openLogPath(path string) (*os.File, os.FileInfo, error) {
+	file, err := os.OpenFile(path, reopenFlags, 0644)
+	if err != nil {
+		return nil, nil, fmtErrorf("failed to open/create log file '%s': %w", path, err)
+	}
+	info, err := file.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = errors.New("not a regular file")
+	}
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, fmtErrorf("refused log file '%s': %w", path, err)
+	}
+	return file, info, nil
+}
+
+// checkLogPath keeps the processor on its log path. At most once per
+// fileCheckInterval of record time, or when forced, it compares the path with
+// the open file: a path that is gone or names another file (rename-on-save
+// editors, sed -i, rm, mv) is opened afresh. CurrentSize is resynced from the
+// file either way. Reports whether the check ran. Processor goroutine only.
+func (l *Logger) checkLogPath(now time.Time, force bool) bool {
+	w := &l.watch
+	if !force && now.Sub(w.lastCheck) < fileCheckInterval {
+		return false
+	}
+	w.lastCheck = now
+
+	file, _ := l.state.CurrentFile.Load().(*os.File)
+	if file == nil {
+		return true
+	}
+	if w.file != file {
+		info, err := file.Stat()
+		if err != nil {
+			w.file = nil
+			return true // unusable handle: the write reports it
+		}
+		w.file, w.info, w.path = file, info, l.getStaticLogFilePath()
+	}
+
+	pathInfo, err := os.Stat(w.path)
+	if err == nil && os.SameFile(pathInfo, w.info) {
+		l.state.CurrentSize.Store(pathInfo.Size())
+		w.warned = false
+		return true
+	}
+	if errors.Is(err, fs.ErrPermission) {
+		return true // cannot tell: keep the open file
+	}
+	newFile, info, err := openLogPath(w.path)
+	if err != nil {
+		if !w.warned {
+			w.warned = true
+			l.internalLog("log path no longer names the open file, not reopened: %v\n", err)
+		}
+		return true
+	}
+	l.state.CurrentFile.Store(newFile)
+	if err := file.Close(); err != nil {
+		l.internalLog("failed to close replaced log file: %v\n", err)
+	}
+	w.file, w.info, w.warned = newFile, info, false
+	l.state.CurrentSize.Store(info.Size())
+	l.state.TotalReopens.Add(1)
+	return true
+}
+
 // rotateLogFile implements the rename-on-rotate strategy
 // Closes current file, renames it with timestamp, creates new static file
 func (l *Logger) rotateLogFile() error {
 	c := l.getConfig()
+	currentPath := l.getStaticLogFilePath()
 
-	// Get current file handle
-	cfPtr := l.state.CurrentFile.Load()
-	if cfPtr == nil {
+	currentFile, _ := l.state.CurrentFile.Load().(*os.File)
+	if currentFile == nil {
 		// This can happen if file logging was disabled and re-enabled
 		// No current file, just create a new one
-		newFile, err := l.createNewLogFile()
+		newFile, info, err := openLogPath(currentPath)
 		if err != nil {
 			return fmtErrorf("failed to create log file during rotation: %w", err)
 		}
 		l.state.CurrentFile.Store(newFile)
-		l.state.CurrentSize.Store(0)
-		l.state.TotalRotations.Add(1)
-		return nil
-	}
-
-	currentFile, ok := cfPtr.(*os.File)
-	if !ok || currentFile == nil {
-		// Invalid file handle in state, treat as if there's no file
-		newFile, err := l.createNewLogFile()
-		if err != nil {
-			return fmtErrorf("failed to create log file during rotation: %w", err)
-		}
-		l.state.CurrentFile.Store(newFile)
-		l.state.CurrentSize.Store(0)
+		l.state.CurrentSize.Store(info.Size())
 		l.state.TotalRotations.Add(1)
 		return nil
 	}
@@ -413,13 +481,13 @@ func (l *Logger) rotateLogFile() error {
 	l.state.CurrentFile.Store((*os.File)(nil))
 
 	// Generate a new unique name with current timestamp for the old log file
-	dir := c.Directory
-	archiveName := l.generateArchiveLogFileName(time.Now())
-	archivePath := filepath.Join(dir, archiveName)
+	archivePath := filepath.Join(c.Directory, l.generateArchiveLogFileName(time.Now()))
 
 	// Rename current file to archive name
-	currentPath := l.getStaticLogFilePath()
-	if err := os.Rename(currentPath, archivePath); err != nil {
+	if err := os.Rename(currentPath, archivePath); errors.Is(err, fs.ErrNotExist) {
+		// Removed since the last path check: nothing to archive
+		l.internalLog("log file '%s' was removed before rotation, nothing to archive\n", currentPath)
+	} else if err != nil {
 		// Critical failure: the original file is closed and couldn't be renamed
 		// This is a terminal state for file logging
 		l.internalLog("failed to rename log file from '%s' to '%s': %v. file logging disabled.",
@@ -430,7 +498,7 @@ func (l *Logger) rotateLogFile() error {
 	}
 
 	// Create new log file at static path
-	newFile, err := l.createNewLogFile()
+	newFile, info, err := openLogPath(currentPath)
 	if err != nil {
 		l.state.LoggerDisabled.Store(true)
 		l.refreshLevelGate()
@@ -439,7 +507,7 @@ func (l *Logger) rotateLogFile() error {
 
 	// Update state
 	l.state.CurrentFile.Store(newFile)
-	l.state.CurrentSize.Store(0)
+	l.state.CurrentSize.Store(info.Size())
 	l.state.TotalRotations.Add(1)
 
 	// Update earliest file time after successful rotation

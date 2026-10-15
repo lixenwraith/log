@@ -2,11 +2,12 @@ package log
 
 import (
 	"testing"
+	"time"
 )
 
-// These benchmarks measure the producer path: format selection, channel send,
-// and drop accounting. File writes complete asynchronously in the processor and
-// are not attributed to the measured iterations.
+// The benchmarks up to BenchmarkProcessLogRecord measure the producer path:
+// format selection, channel send, and drop accounting. File writes complete
+// asynchronously in the processor and are not attributed to their iterations.
 
 // BenchmarkLoggerInfo measures the default raw-format path.
 func BenchmarkLoggerInfo(b *testing.B) {
@@ -94,4 +95,38 @@ func BenchmarkConcurrentLogging(b *testing.B) {
 			i++
 		}
 	})
+}
+
+// BenchmarkProcessLogRecord measures the processor's write path, which the
+// producer benchmarks above do not see. Record stamps advance by step to stand
+// for a logging rate: at 100/s every record is due a log path check.
+func BenchmarkProcessLogRecord(b *testing.B) {
+	for _, bc := range []struct {
+		name string
+		step time.Duration // 0: time.Now per record, as emit stamps it
+	}{{"ts=now", 0}, {"rate=1k/s", time.Millisecond}, {"rate=100/s", 10 * time.Millisecond}} {
+		b.Run(bc.name, func(b *testing.B) {
+			l := NewLogger()
+			c := DefaultConfig()
+			c.EnableConsole = false
+			c.EnableFile = true
+			c.Directory = b.TempDir()
+			c.Format = "txt"
+			c.MaxSizeKB = 0
+			mustNoErr(b, l.ApplyConfig(c), "ApplyConfig") // not started: the benchmark is the processor
+			b.Cleanup(func() { _ = l.Shutdown() })
+			rec := logRecord{Flags: l.getFlags(), Level: LevelInfo, Args: []any{"benchmark message", 42}}
+			ts := time.Now()
+			b.ReportAllocs()
+			for b.Loop() {
+				if ts = ts.Add(bc.step); bc.step == 0 {
+					ts = time.Now()
+				}
+				rec.TimeStamp = ts
+				if l.processLogRecord(rec) == 0 {
+					b.Fatal("record not written")
+				}
+			}
+		})
+	}
 }

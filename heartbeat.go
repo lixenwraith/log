@@ -92,6 +92,7 @@ func (l *Logger) logDiskHeartbeat() {
 		"sequence", sequence,
 		"rotated_files", rotations,
 		"deleted_files", deletions,
+		"reopened_files", l.state.TotalReopens.Load(),
 		"total_log_size_mb", fmt.Sprintf("%.2f", totalSizeMB),
 		"log_file_count", fileCount,
 		"current_file_size_mb", fmt.Sprintf("%.2f", currentSizeMB),

@@ -51,6 +51,7 @@ func (l *Logger) processLogs(ch <-chan logRecord, stop <-chan struct{}, done cha
 	for {
 		select {
 		case <-stop:
+			l.checkLogPath(time.Now(), true)
 			l.drain(ch)
 			l.processorErr = l.performSync()
 			return
@@ -107,7 +108,10 @@ func (l *Logger) drain(ch <-chan logRecord) {
 	}
 }
 
+// handleFlushRequest also reattaches a replaced log path before draining, so a
+// Flush is a deterministic point to follow an external rotation
 func (l *Logger) handleFlushRequest(ch <-chan logRecord, request flushRequest) {
+	l.checkLogPath(time.Now(), true)
 	l.drain(ch)
 	request.done <- l.performSync()
 }
@@ -116,6 +120,14 @@ func (l *Logger) handleFlushRequest(ch <-chan logRecord, request flushRequest) {
 func (l *Logger) processLogRecord(record logRecord) int64 {
 	c := l.getConfig()
 	enableFile := c.EnableFile
+
+	// Follow the log path when the file was replaced, removed or resized. Before
+	// the disk gate: removing the file is how an operator frees the space.
+	now := record.TimeStamp
+	if now.IsZero() {
+		now = time.Now()
+	}
+	checked := enableFile && l.checkLogPath(now, false)
 	if enableFile && !l.state.DiskStatusOK.Load() {
 		// Simple increment of both counters
 		l.handleFailedSend()
@@ -171,17 +183,19 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 		return formattedDataLen // Return data length for adaptive interval calculations
 	}
 
-	// File rotation check
-	currentFileSize := l.state.CurrentSize.Load()
-	estimatedSize := currentFileSize + formattedDataLen
-
-	maxSizeKB := c.MaxSizeKB
-	if maxSizeKB > 0 && estimatedSize > maxSizeKB*sizeMultiplier {
-		if err := l.rotateLogFile(); err != nil {
-			l.internalLog("failed to rotate log file: %v\n", err)
-			// Account for the dropped log that triggered the failed rotation
-			l.handleFailedSend()
-			return 0
+	// File rotation check, on the size read from the file: an external edit
+	// since the last check leaves CurrentSize stale
+	if maxSize := c.MaxSizeKB * sizeMultiplier; maxSize > 0 && l.state.CurrentSize.Load()+formattedDataLen > maxSize {
+		if !checked {
+			l.checkLogPath(now, true)
+		}
+		if l.state.CurrentSize.Load()+formattedDataLen > maxSize {
+			if err := l.rotateLogFile(); err != nil {
+				l.internalLog("failed to rotate log file: %v\n", err)
+				// Account for the dropped log that triggered the failed rotation
+				l.handleFailedSend()
+				return 0
+			}
 		}
 	}
 

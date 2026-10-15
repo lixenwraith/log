@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -217,4 +219,167 @@ func TestArchiveNaming(t *testing.T) {
 	}
 	isTrue(t, strings.HasPrefix(second, "log_"), "archive prefix")
 	isTrue(t, strings.HasSuffix(second, ".log"), "archive extension")
+}
+
+// followLogger returns a started txt logger writing dir/app.log, and the
+// diagnostics it reported
+func followLogger(t *testing.T, maxKB int64) (*Logger, string, func() []string) {
+	t.Helper()
+	l := NewLogger()
+	var mu sync.Mutex
+	var diags []string
+	l.SetErrorHandler(func(s string) { mu.Lock(); diags = append(diags, s); mu.Unlock() })
+	c := DefaultConfig()
+	c.EnableConsole = false
+	c.EnableFile = true
+	c.Directory = t.TempDir()
+	c.Name = "app"
+	c.Format = "txt"
+	c.MaxSizeKB = maxKB
+	c.MaxTotalSizeKB = 0
+	c.MinDiskFreeKB = 0
+	mustNoErr(t, l.ApplyConfig(c), "ApplyConfig")
+	mustNoErr(t, l.Start(), "Start")
+	t.Cleanup(func() { _ = l.Shutdown() })
+	return l, filepath.Join(c.Directory, "app.log"), func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(diags)
+	}
+}
+
+func logFlush(t *testing.T, l *Logger, msgs ...string) {
+	t.Helper()
+	for _, m := range msgs {
+		l.Info(m)
+	}
+	mustNoErr(t, l.Flush(time.Second), "Flush")
+}
+
+// logProcessed logs without Flush, whose forced path check would mask the one under test
+func logProcessed(t *testing.T, l *Logger, msgs ...string) {
+	t.Helper()
+	want := l.state.TotalLogsProcessed.Load() + uint64(len(msgs))
+	for _, m := range msgs {
+		l.Info(m)
+	}
+	mustEventually(t, time.Second, "records processed", func() bool { return l.state.TotalLogsProcessed.Load() >= want })
+}
+
+// replaceFile saves content the way vim, sed -i and perl -i do: a new file renamed over path
+func replaceFile(t *testing.T, path, content string) {
+	t.Helper()
+	mustNoErr(t, os.WriteFile(path+".tmp", []byte(content), 0644), "write replacement")
+	mustNoErr(t, os.Rename(path+".tmp", path), "replace")
+}
+
+func TestFollowsReplacedLogFile(t *testing.T) {
+	l, path, _ := followLogger(t, 0)
+	logFlush(t, l, "before")
+	data, err := os.ReadFile(path)
+	mustNoErr(t, err, "read")
+	replaceFile(t, path, string(data)+"NOTE by user\n")
+	time.Sleep(fileCheckInterval + 5*time.Millisecond) // the next record is due a check
+	logProcessed(t, l, "after")
+	data, err = os.ReadFile(path)
+	mustNoErr(t, err, "read")
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	mustEqual(t, len(lines), 3, "lines: "+string(data))
+	contains(t, lines[0], "before", "kept by the editor")
+	equal(t, lines[1], "NOTE by user", "note")
+	contains(t, lines[2], "after", "appended after the note")
+	equal(t, l.state.TotalReopens.Load(), uint64(1), "reopens")
+}
+
+// The rotation decision follows a replaced file instead of archiving it
+func TestRotationFollowsReplacedLogFile(t *testing.T) {
+	l, path, _ := followLogger(t, 1) // 1000 bytes
+	for l.state.CurrentSize.Load() < 900 {
+		logFlush(t, l, "fill-"+strings.Repeat("y", 10))
+	}
+	replaceFile(t, path, "")        // all content deleted
+	pad := strings.Repeat("z", 120) // the first record after the edit crosses the stale size limit
+	logProcessed(t, l, "a1"+pad, "a2"+pad, "a3"+pad)
+	data, err := os.ReadFile(path)
+	mustNoErr(t, err, "read")
+	equal(t, strings.Count(string(data), pad), 3, "records after the edit: "+string(data))
+	equal(t, l.state.TotalRotations.Load(), uint64(0), "rotations")
+}
+
+// Truncation leaves the tracked size stale; rotation must use the real size
+func TestRotationAfterTruncateUsesFileSize(t *testing.T) {
+	l, path, _ := followLogger(t, 2) // 2000 bytes
+	for l.state.CurrentSize.Load() < 1800 {
+		logFlush(t, l, "fill-"+strings.Repeat("y", 10))
+	}
+	mustNoErr(t, os.Truncate(path, 0), "truncate")
+	logProcessed(t, l, "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10")
+	equal(t, l.state.TotalRotations.Load(), uint64(0), "rotations")
+	fi, err := os.Stat(path)
+	mustNoErr(t, err, "stat")
+	equal(t, l.state.CurrentSize.Load(), fi.Size(), "tracked size")
+}
+
+// A file removed under the logger leaves nothing to archive, not a disabled logger
+func TestRotateRemovedLogFile(t *testing.T) {
+	l, path, _ := followLogger(t, 0)
+	mustNoErr(t, l.Stop(5*time.Second), "Stop") // own the file state from the test goroutine
+	mustNoErr(t, os.Remove(path), "rm")
+	mustNoErr(t, l.rotateLogFile(), "rotate")
+	isFalse(t, l.state.LoggerDisabled.Load(), "logger disabled")
+	_, err := os.Stat(path)
+	mustNoErr(t, err, "new active file")
+}
+
+// Flush and Stop reattach a moved log path at once, as after logrotate's create
+// mode; no record is processed in between, so only their check can reopen
+func TestFlushAndStopReattachMovedLogFile(t *testing.T) {
+	for name, barrier := range map[string]func(l *Logger) error{
+		"flush": func(l *Logger) error { return l.Flush(time.Second) },
+		"stop":  func(l *Logger) error { return l.Stop(5 * time.Second) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			l, path, _ := followLogger(t, 0)
+			logFlush(t, l, "before")
+			mustNoErr(t, os.Rename(path, path+".1"), "mv")
+			mustNoErr(t, barrier(l), name)
+			_, err := os.Stat(path)
+			mustNoErr(t, err, "path recreated")
+			equal(t, l.state.TotalReopens.Load(), uint64(1), "reopens")
+		})
+	}
+}
+
+// Cleanup never deletes the file being written, whatever it is now named
+func TestCleanupSparesOpenFile(t *testing.T) {
+	l, path, _ := followLogger(t, 0)
+	logFlush(t, l, "before")
+	mustNoErr(t, l.Stop(5*time.Second), "Stop") // own the file state from the test goroutine
+	moved := filepath.Join(filepath.Dir(path), "app-keep.log")
+	mustNoErr(t, os.Rename(path, moved), "mv")
+	old := time.Now().Add(-48 * time.Hour)
+	mustNoErr(t, os.Chtimes(moved, old, old), "age")
+	c := l.GetConfig()
+	c.RetentionPeriodHrs = 1
+	mustNoErr(t, l.ApplyConfig(c), "ApplyConfig")
+
+	errContains(t, l.cleanOldLogs(1), "no old logs", "size cleanup")
+	mustNoErr(t, l.cleanExpiredLogs(old), "retention cleanup")
+	_, err := os.Stat(moved)
+	mustNoErr(t, err, "open file kept")
+	equal(t, l.state.TotalDeletions.Load(), uint64(0), "deletions")
+}
+
+// A file removed to free disk space is followed while records are dropped for
+// that low space, so the unlinked inode is released
+func TestFollowsRemovedLogFileWhileDiskLow(t *testing.T) {
+	l, path, _ := followLogger(t, 0)
+	logFlush(t, l, "before")
+	l.state.DiskStatusOK.Store(false) // as when min_disk_free_kb is not met
+	mustNoErr(t, os.Remove(path), "rm")
+	time.Sleep(fileCheckInterval + 5*time.Millisecond)
+	l.Info("dropped")
+	mustEventually(t, time.Second, "path recreated", func() bool { return l.state.TotalReopens.Load() == 1 })
+	_, err := os.Stat(path)
+	mustNoErr(t, err, "path")
 }
