@@ -247,6 +247,10 @@ logger.LogTrace(2, "Function boundary", "entering", true)
 
 `Enabled(level int64) bool` checks the current emit gate before constructing expensive arguments. `SetLevel(level int64)` updates the threshold without restarting. `SetContextKeys(tag string, vals ...string)` names a tag and up to three counters; `LogContext(ctx Context, flags, level, depth int64, args ...any)` stamps them onto a record. `Flags()` returns display defaults suitable for combining with `FlagKV`.
 
+### Dropped records
+
+`Dropped() uint64` counts the records lost since the logger was made: refused by a full queue or a stopped logger, or failed at the output. It is the PROC heartbeat's `total_dropped_logs`, readable without heartbeats enabled.
+
 ### Shutdown
 
 ```go
