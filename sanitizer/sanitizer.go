@@ -73,6 +73,7 @@ var policyRules = map[PolicyPreset][]rule{
 // Sanitizer provides chainable text sanitization
 type Sanitizer struct {
 	rules []rule
+	ascii [utf8.RuneSelf]bool // the ASCII runes some rule matches
 }
 
 // New creates a new Sanitizer instance
@@ -86,12 +87,14 @@ func New() *Sanitizer {
 func (s *Sanitizer) Rule(filter uint64, transform uint64) *Sanitizer {
 	// Append rule in natural order
 	s.rules = append(s.rules, rule{filter: filter, transform: transform})
+	s.index()
 	return s
 }
 
 // RuleFunc adds a predicate-based rule (appended, earliest rule applies first)
 func (s *Sanitizer) RuleFunc(fn func(rune) bool, transform uint64) *Sanitizer {
 	s.rules = append(s.rules, rule{fn: fn, transform: transform})
+	s.index()
 	return s
 }
 
@@ -99,8 +102,36 @@ func (s *Sanitizer) RuleFunc(fn func(rune) bool, transform uint64) *Sanitizer {
 func (s *Sanitizer) Policy(preset PolicyPreset) *Sanitizer {
 	if rules, ok := policyRules[preset]; ok {
 		s.rules = append(s.rules, rules...)
+		s.index()
 	}
 	return s
+}
+
+// index records the ASCII runes some rule matches, so a clean byte costs one
+// lookup; a predicate must therefore depend on its rune alone
+func (s *Sanitizer) index() {
+	for c := range s.ascii {
+		s.ascii[c] = false
+		for _, rl := range s.rules {
+			if rl.matches(rune(c)) {
+				s.ascii[c] = true
+				break
+			}
+		}
+	}
+}
+
+// ruleFor returns the index of the first rule matching r, or -1
+func (s *Sanitizer) ruleFor(r rune) int {
+	if r < utf8.RuneSelf && !s.ascii[r] {
+		return -1
+	}
+	for i, rl := range s.rules {
+		if rl.matches(r) {
+			return i
+		}
+	}
+	return -1
 }
 
 // Sanitize applies all configured rules. Returns the input unchanged (no
@@ -139,12 +170,18 @@ func normalizeUTF8(data string) string {
 
 // firstMatch returns the byte index of the first rune matching any rule, -1 if none
 func (s *Sanitizer) firstMatch(data string) int {
-	for i, r := range data {
-		for _, rl := range s.rules {
-			if rl.matches(r) {
+	for i := 0; i < len(data); i++ {
+		if c := data[i]; c < utf8.RuneSelf {
+			if s.ascii[c] {
 				return i
 			}
+			continue
 		}
+		r, size := utf8.DecodeRuneInString(data[i:])
+		if s.ruleFor(r) >= 0 {
+			return i
+		}
+		i += size - 1
 	}
 	return -1
 }
@@ -152,16 +189,13 @@ func (s *Sanitizer) firstMatch(data string) int {
 func (s *Sanitizer) appendSanitized(dst []byte, data string) []byte {
 	start := 0
 	for i, r := range data {
-		for _, rl := range s.rules { // first match wins
-			if rl.matches(r) {
-				// A rule without a known transform is a passthrough rule.
-				if rl.transform&(TransformStrip|TransformHexEncode|TransformJSONEscape) != 0 {
-					dst = append(dst, data[start:i]...)
-					applyTransform(&dst, r, rl.transform)
-					_, size := utf8.DecodeRuneInString(data[i:])
-					start = i + size
-				}
-				break
+		if j := s.ruleFor(r); j >= 0 { // first match wins
+			// A rule without a known transform is a passthrough rule.
+			if rl := s.rules[j]; rl.transform&(TransformStrip|TransformHexEncode|TransformJSONEscape) != 0 {
+				dst = append(dst, data[start:i]...)
+				applyTransform(&dst, r, rl.transform)
+				_, size := utf8.DecodeRuneInString(data[i:])
+				start = i + size
 			}
 		}
 	}
@@ -386,6 +420,16 @@ func (se *Serializer) WriteJSON(buf *[]byte, v any) error {
 	return nil
 }
 
+// quoteASCII marks the ASCII runes that make a txt value need quotes: space,
+// control characters, and the shell and syntax specials
+var quoteASCII = func() (t [utf8.RuneSelf]bool) {
+	for c := range t {
+		r := rune(c)
+		t[c] = unicode.IsSpace(r) || !unicode.IsPrint(r) || strings.ContainsRune("\"'\\$`!&|;()<>*?[]{}~#%=", r)
+	}
+	return
+}()
+
 // NeedsQuotes determines if quoting is needed
 func (se *Serializer) NeedsQuotes(s string) bool {
 	switch se.format {
@@ -396,16 +440,13 @@ func (se *Serializer) NeedsQuotes(s string) bool {
 			return true
 		}
 		for _, r := range s {
-			if unicode.IsSpace(r) {
-				return true
+			if r < utf8.RuneSelf {
+				if quoteASCII[r] {
+					return true
+				}
+				continue
 			}
-			switch r {
-			case '"', '\'', '\\', '$', '`', '!', '&', '|', ';',
-				'(', ')', '<', '>', '*', '?', '[', ']', '{', '}',
-				'~', '#', '%', '=', '\n', '\r', '\t':
-				return true
-			}
-			if !unicode.IsPrint(r) {
+			if unicode.IsSpace(r) || !unicode.IsPrint(r) {
 				return true
 			}
 		}

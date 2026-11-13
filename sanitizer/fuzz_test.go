@@ -90,3 +90,51 @@ func TestSerializerInvalidNumbers(t *testing.T) {
 		eq(t, got, input, "invalid number round trip")
 	}
 }
+
+// The ASCII index is a cache of the rules: for every rune, the sanitizer
+// applies the rule a scan of all rules picks, and txt quoting agrees with the
+// rune classes it stands for
+func FuzzIndexAgreesWithRules(f *testing.F) {
+	for _, s := range []string{"", "plain <tag> a=b", "\x00\x7f\u0085‮世界", "\xff$(id)\t"} {
+		f.Add(s, uint8(1), uint64(FilterControl), uint64(TransformHexEncode), byte('a'))
+	}
+	f.Fuzz(func(t *testing.T, input string, policy uint8, filter, transform uint64, mark byte) {
+		policies := []PolicyPreset{PolicyRaw, PolicyTxt, PolicyJSON, PolicyShell}
+		s := New().Policy(policies[int(policy)%len(policies)]).Rule(filter, transform).
+			RuleFunc(func(r rune) bool { return r == rune(mark) }, TransformStrip)
+		scan := func(r rune) int {
+			for i, rl := range s.rules {
+				if rl.matches(r) {
+					return i
+				}
+			}
+			return -1
+		}
+		for r := range rune(utf8.RuneSelf) {
+			if got, want := s.ruleFor(r), scan(r); got != want {
+				t.Fatalf("rune %U: rule %d, scan %d", r, got, want)
+			}
+		}
+		var want []byte
+		start, clean := 0, normalizeUTF8(input)
+		for i, r := range clean {
+			if got, j := s.ruleFor(r), scan(r); got != j {
+				t.Fatalf("rune %U: rule %d, scan %d", r, got, j)
+			} else if j >= 0 && s.rules[j].transform&(TransformStrip|TransformHexEncode|TransformJSONEscape) != 0 {
+				want = append(want, clean[start:i]...)
+				applyTransform(&want, r, s.rules[j].transform)
+				start = i + utf8.RuneLen(r)
+			}
+		}
+		if got := s.Sanitize(input); got != string(append(want, clean[start:]...)) {
+			t.Fatalf("Sanitize(%q) = %q, scan %q", input, got, append(want, clean[start:]...))
+		}
+		quotes := input == ""
+		for _, r := range input {
+			quotes = quotes || unicode.IsSpace(r) || !unicode.IsPrint(r) || strings.ContainsRune("\"'\\$`!&|;()<>*?[]{}~#%=", r)
+		}
+		if got := NewSerializer("txt", nil).NeedsQuotes(input); got != quotes {
+			t.Fatalf("NeedsQuotes(%q) = %v, want %v", input, got, quotes)
+		}
+	})
+}
