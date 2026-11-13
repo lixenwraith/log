@@ -191,7 +191,9 @@ values; cycles and larger graphs produce `<cyclic or oversized value>`. This als
 applies to complex values under `FlagRaw`, which use `%+v` text formatting.
 Custom formatting and marshal callbacks must terminate and be safe for shared use.
 A custom rule with no recognized transform preserves its matched rune. Predicate
-callbacks must be safe for concurrent use when the sanitizer is shared.
+callbacks must be safe for concurrent use when the sanitizer is shared, and must
+depend on their rune alone: ASCII runes are classified once, when a rule is
+added.
 
 - `format=json` + `sanitization=raw`: recommended; transport escaping only.
 - `format=json` + `sanitization=txt`: non-printables appear as `<XX>` inside
@@ -291,7 +293,8 @@ textLog := txtFormatter.Format(...)
 ## Performance Considerations
 
 - Formatter append methods reuse caller-provided buffers
-- Sanitizer avoids allocations when no rule matches valid UTF-8
+- Sanitizer avoids allocations when no rule matches valid UTF-8, and checks an
+  ASCII byte with one table lookup, the rules' verdicts on it cached
 - Formatter reuses internal buffers via `Reset()`
 - Scalar formatting avoids reflection; complex values and structured marshaling may use it
 
