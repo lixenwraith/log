@@ -443,6 +443,13 @@ func (l *Logger) Flags() int64 {
 	return l.state.Flags.Load()
 }
 
+// Dropped is how many records were lost since the logger was made: refused by
+// a full queue or a stopped logger, or failed at the output. It is the PROC
+// heartbeat's total_dropped_logs, for hosts that count what never arrived.
+func (l *Logger) Dropped() uint64 {
+	return l.state.TotalDroppedLogs.Load()
+}
+
 // LogContext emits a record with caller-supplied context and explicit flags
 func (l *Logger) LogContext(ctx Context, flags, level, depth int64, args ...any) {
 	if !l.Enabled(level) {

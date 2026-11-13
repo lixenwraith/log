@@ -111,7 +111,7 @@ func TestDroppedLogs(t *testing.T) {
 		for i := range 100 {
 			l.Info("flood", i)
 		}
-		equal(t, l.state.TotalDroppedLogs.Load(), uint64(99), "exact overflow")
+		equal(t, l.Dropped(), uint64(99), "exact overflow")
 		close(release)
 		synctest.Wait()
 		// The initial heartbeat encounters the full queue and adds one more drop.
