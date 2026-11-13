@@ -36,6 +36,9 @@ type Config struct {
 	MaxTotalSizeKB int64 `toml:"max_total_size_kb"` // Max total size of all logs in dir
 	MinDiskFreeKB  int64 `toml:"min_disk_free_kb"`  // Minimum free disk space required
 
+	// Cleanup, retention and size limits see only {name}.{ext} and its archives
+	CleanupOwnFiles bool `toml:"cleanup_own_files"`
+
 	// Timers
 	FlushIntervalMs    int64   `toml:"flush_interval_ms"`    // Interval for flushing file buffer
 	TraceDepth         int64   `toml:"trace_depth"`          // Default trace depth (0-10)
@@ -82,6 +85,8 @@ var defaultConfig = Config{
 	MaxSizeKB:      1000,
 	MaxTotalSizeKB: 5000,
 	MinDiskFreeKB:  10000,
+
+	CleanupOwnFiles: false,
 
 	// Timers
 	FlushIntervalMs:    100,
@@ -297,6 +302,12 @@ func applyConfigField(cfg *Config, key, value string) error {
 			return fmtErrorf("invalid integer value for min_disk_free_kb '%s': %w", value, err)
 		}
 		cfg.MinDiskFreeKB = intVal
+	case "cleanup_own_files":
+		boolVal, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmtErrorf("invalid boolean value for cleanup_own_files '%s': %w", value, err)
+		}
+		cfg.CleanupOwnFiles = boolVal
 
 	// Timers
 	case "flush_interval_ms":

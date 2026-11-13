@@ -44,6 +44,7 @@ type fileWatch struct {
 	path      string      // log path for file; it changes only with a new file
 	lastCheck time.Time   // record time of the last path check
 	warned    bool        // a refused or failed reopen was reported
+	unsynced  bool        // written since the last successful sync
 }
 
 // sink holds the console writers in one atomic.Value; warn takes split's

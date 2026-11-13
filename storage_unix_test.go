@@ -49,3 +49,42 @@ func TestReopenRefusesNonRegularPath(t *testing.T) {
 		})
 	}
 }
+
+// The flush tick syncs only a file written since its last successful sync, so
+// an idle logger makes no fsync calls. A pipe stands in for the file: it
+// refuses fsync, so each attempt is reported.
+func TestFlushTickSyncsOnlyAfterAWrite(t *testing.T) {
+	l := NewLogger()
+	c := DefaultConfig()
+	c.EnableConsole = false
+	c.EnableFile = true
+	c.Directory = t.TempDir()
+	mustNoErr(t, l.ApplyConfig(c), "apply") // not started: the test is the processor
+	defer l.Shutdown()
+	r, w, err := os.Pipe()
+	mustNoErr(t, err, "pipe")
+	defer r.Close()
+	defer w.Close()
+	attempts := 0
+	l.SetErrorHandler(func(msg string) {
+		if strings.Contains(msg, "failed to sync") {
+			attempts++
+		}
+	})
+	file := l.state.CurrentFile.Swap(w)
+	defer l.state.CurrentFile.Store(file)
+
+	l.handleFlushTick()
+	equal(t, attempts, 0, "idle tick")
+	stamp := time.Now()
+	l.watch.lastCheck = stamp // a due path check would reopen the log path
+	l.processLogRecord(logRecord{Flags: l.getFlags(), TimeStamp: stamp, Level: LevelInfo, Args: []any{"written"}})
+	l.handleFlushTick()
+	l.handleFlushTick()
+	equal(t, attempts, 2, "a failed sync is tried again")
+	l.state.CurrentFile.Store(file)
+	l.handleFlushTick()
+	l.state.CurrentFile.Store(w)
+	l.handleFlushTick()
+	equal(t, attempts, 2, "a successful sync ends the attempts")
+}

@@ -34,6 +34,7 @@ All builder methods return `*Builder` for chaining. Validation errors are return
 | `MaxTotalSizeMB(size int64)`          | `size`: Size in MB            | Sets max total log directory size in MB     |
 | `MinDiskFreeKB(size int64)`           | `size`: Size in KB            | Sets minimum required free disk space in KB |
 | `MinDiskFreeMB(size int64)`           | `size`: Size in MB            | Sets minimum required free disk space in MB |
+| `CleanupOwnFiles(enable bool)`        | `enable`: Boolean             | Limits cleanup and size limits to this logger's files |
 | `EnableConsole(enable bool)`          | `enable`: Boolean             | Enables console output                      |
 | `EnableFile(enable bool)`             | `enable`: Boolean             | Enables file output                         |
 | `ConsoleTarget(target string)`        | `target`: "stdout"/"stderr"/"split"   | Sets console output target                  |
@@ -48,7 +49,7 @@ All builder methods return `*Builder` for chaining. Validation errors are return
 | `EnableAdaptiveInterval(enable bool)` | `enable`: Boolean             | Enables adaptive disk check intervals       |
 | `MinCheckIntervalMs(interval int64)`  | `interval`: Milliseconds      | Sets minimum adaptive interval              |
 | `MaxCheckIntervalMs(interval int64)`  | `interval`: Milliseconds      | Sets maximum adaptive interval              |
-| `EnablePeriodicSync(enable bool)`     | `enable`: Boolean             | Enables periodic disk sync                  |
+| `EnablePeriodicSync(enable bool)`     | `enable`: Boolean             | Enables periodic sync of a written file     |
 | `RetentionPeriodHrs(hours float64)`   | `hours`: Hours                | Sets log retention period                   |
 | `RetentionCheckMins(mins float64)`    | `mins`: Minutes               | Sets retention check interval               |
 | `InternalErrorsToStderr(enable bool)` | `enable`: Boolean             | Send internal errors to stderr              |
