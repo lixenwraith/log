@@ -67,20 +67,18 @@ func (l *Logger) logDiskHeartbeat() {
 	deletions := l.state.TotalDeletions.Load()
 
 	c := l.getConfig()
-	dir := c.Directory
-	ext := c.Extension
 	currentSizeMB := float64(l.state.CurrentSize.Load()) / (1024 * 1024) // Current file size
 	totalSizeMB := float64(-1.0)                                         // Default error value
 	fileCount := -1                                                      // Default error value
 
-	dirSize, err := l.getLogDirSize(dir, ext)
+	dirSize, err := l.getLogDirSize(c)
 	if err == nil {
 		totalSizeMB = float64(dirSize) / (1024 * 1024)
 	} else {
 		l.internalLog("warning - heartbeat failed to get dir size: %v\n", err)
 	}
 
-	count, err := l.getLogFileCount(dir, ext)
+	count, err := l.getLogFileCount(c)
 	if err == nil {
 		fileCount = count
 	} else {
@@ -100,7 +98,7 @@ func (l *Logger) logDiskHeartbeat() {
 	}
 
 	// Add disk free space if we can get it
-	freeSpace, err := l.getDiskFreeSpace(dir)
+	freeSpace, err := l.getDiskFreeSpace(c.Directory)
 	if err == nil {
 		freeSpaceMB := float64(freeSpace) / (1024 * 1024)
 		diskArgs = append(diskArgs, "disk_free_mb", fmt.Sprintf("%.2f", freeSpaceMB))

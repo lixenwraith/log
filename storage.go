@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// performSync syncs the current log file
+// performSync syncs the current log file; a success clears the unsynced mark
 func (l *Logger) performSync() error {
 	if !l.getConfig().EnableFile {
 		return nil
@@ -20,6 +20,7 @@ func (l *Logger) performSync() error {
 		if err := file.Sync(); err != nil {
 			return fmtErrorf("failed to sync log file '%s': %w", file.Name(), err)
 		}
+		l.watch.unsynced = false
 		return nil
 	}
 	return fmtErrorf("file output enabled without an open log file")
@@ -41,7 +42,6 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 	}
 
 	dir := c.Directory
-	ext := c.Extension
 	maxTotalKB := c.MaxTotalSizeKB
 	minDiskFreeKB := c.MinDiskFreeKB
 	maxTotal := maxTotalKB * sizeMultiplier
@@ -73,7 +73,7 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 	}
 
 	if maxTotal > 0 {
-		dirSize, err := l.getLogDirSize(dir, ext)
+		dirSize, err := l.getLogDirSize(c)
 		if err != nil {
 			l.internalLog("warning - failed to check log directory size for '%s': %v\n", dir, err)
 			if l.state.DiskStatusOK.Load() {
@@ -127,8 +127,9 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 	}
 }
 
-// getLogDirSize calculates total size of log files matching the current extension
-func (l *Logger) getLogDirSize(dir, ext string) (int64, error) {
+// getLogDirSize calculates the total size of the files matchesLogEntry selects
+func (l *Logger) getLogDirSize(c *Config) (int64, error) {
+	dir := c.Directory
 	var size int64
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -139,7 +140,7 @@ func (l *Logger) getLogDirSize(dir, ext string) (int64, error) {
 	}
 
 	for _, entry := range entries {
-		if !matchesLogEntry(entry, ext) {
+		if !matchesLogEntry(entry, c) {
 			continue
 		}
 		info, errInfo := entry.Info()
@@ -180,7 +181,7 @@ func (l *Logger) cleanOldLogs(required int64) error {
 	active := l.openFileInfo()
 	var logs []logFileMeta
 	for _, entry := range entries {
-		if !matchesLogEntry(entry, ext) || entry.Name() == staticLogName {
+		if !matchesLogEntry(entry, c) || entry.Name() == staticLogName {
 			continue
 		}
 		info, errInfo := entry.Info()
@@ -226,9 +227,7 @@ func (l *Logger) cleanOldLogs(required int64) error {
 	return nil
 }
 
-// updateEarliestFileTime scans the log directory for the oldest log file.
-// Matches by extension only: a name-prefix filter would hide files written by
-// earlier runs when the active name carries a per-run timestamp.
+// updateEarliestFileTime scans the log directory for the oldest log file
 func (l *Logger) updateEarliestFileTime() {
 	c := l.getConfig()
 	dir := c.Directory
@@ -249,7 +248,7 @@ func (l *Logger) updateEarliestFileTime() {
 	}
 
 	for _, entry := range entries {
-		if !matchesLogEntry(entry, ext) {
+		if !matchesLogEntry(entry, c) {
 			continue
 		}
 		fname := entry.Name()
@@ -297,7 +296,7 @@ func (l *Logger) cleanExpiredLogs(oldest time.Time) error {
 
 	active := l.openFileInfo()
 	for _, entry := range entries {
-		if !matchesLogEntry(entry, ext) || entry.Name() == staticLogName {
+		if !matchesLogEntry(entry, c) || entry.Name() == staticLogName {
 			continue
 		}
 		info, errInfo := entry.Info()
@@ -516,8 +515,9 @@ func (l *Logger) rotateLogFile() error {
 	return nil
 }
 
-// getLogFileCount calculates the number of log files matching the current extension
-func (l *Logger) getLogFileCount(dir, ext string) (int, error) {
+// getLogFileCount counts the files matchesLogEntry selects
+func (l *Logger) getLogFileCount(c *Config) (int, error) {
+	dir := c.Directory
 	count := 0
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -528,24 +528,57 @@ func (l *Logger) getLogFileCount(dir, ext string) (int, error) {
 	}
 
 	for _, entry := range entries {
-		if !matchesLogEntry(entry, ext) {
+		if !matchesLogEntry(entry, c) {
 			continue
 		}
-		// Count all files matching the extension, including the current one if present
-		count++
+		count++ // the active file included
 	}
 	return count, nil
 }
 
-// Cleanup is scoped to regular files with this extension, including files from
-// earlier runs with different base names. Extensionless logs match only files
-// without an extension. Each logger must own its directory exclusively.
-func matchesLogEntry(entry os.DirEntry, ext string) bool {
+// matchesLogEntry selects the regular files that cleanup, retention and size
+// limits manage. By extension by default, so files of earlier runs under
+// per-run names are still cleaned, and the logger must own its directory; with
+// CleanupOwnFiles only {name}.{ext} and its archives, so others can share it.
+func matchesLogEntry(entry os.DirEntry, c *Config) bool {
 	if !entry.Type().IsRegular() {
 		return false
 	}
-	if ext == "" {
-		return filepath.Ext(entry.Name()) == ""
+	name := entry.Name()
+	if c.CleanupOwnFiles {
+		return isOwnLogName(name, c.Name, c.Extension)
 	}
-	return strings.HasSuffix(entry.Name(), "."+ext)
+	if c.Extension == "" {
+		return filepath.Ext(name) == ""
+	}
+	return strings.HasSuffix(name, "."+c.Extension)
+}
+
+// isOwnLogName reports whether file is base's active file or an archive that
+// generateArchiveLogFileName makes: base_YYMMDD_HHMMSS[_N], then the extension
+func isOwnLogName(file, base, ext string) bool {
+	if ext != "" {
+		var ok bool
+		if file, ok = strings.CutSuffix(file, "."+ext); !ok {
+			return false
+		}
+	}
+	rest, ok := strings.CutPrefix(file, base)
+	if !ok || rest == "" {
+		return ok
+	}
+	if len(rest) < 14 || rest[0] != '_' || rest[7] != '_' || !isDigits(rest[1:7]) || !isDigits(rest[8:14]) {
+		return false
+	}
+	rest = rest[14:]
+	return rest == "" || len(rest) > 1 && rest[0] == '_' && isDigits(rest[1:])
+}
+
+func isDigits(s string) bool {
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }

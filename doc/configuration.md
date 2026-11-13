@@ -73,7 +73,7 @@ Names and extensions must be filename components, without path separators or NUL
 |-----------|------|-------------|---------|
 | `buffer_size` | `int64` | Channel buffer size for log records | `1024` |
 | `flush_interval_ms` | `int64` | Buffer flush interval (milliseconds) | `100` |
-| `enable_periodic_sync` | `bool` | Enable periodic disk sync | `true` |
+| `enable_periodic_sync` | `bool` | Sync the file each flush interval when written since the last sync | `true` |
 | `trace_depth` | `int64` | Default function trace depth (0-10) | `0` |
 
 ### File Management
@@ -85,6 +85,7 @@ Names and extensions must be filename components, without path separators or NUL
 | `min_disk_free_kb` | `int64` | Minimum required free disk space (KB) | `10000` |
 | `retention_period_hrs` | `float64` | Hours to keep log files (0=disabled) | `0.0`  |
 | `retention_check_mins` | `float64` | Retention check interval (minutes) | `60.0` |
+| `cleanup_own_files` | `bool` | Cleanup, retention and `max_total_size_kb` consider only `{name}.{extension}` and its archives, so the directory can be shared | `false` |
 
 ### Disk Monitoring
 

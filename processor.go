@@ -203,6 +203,9 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 	cfPtr := l.state.CurrentFile.Load()
 	if currentLogFile, isFile := cfPtr.(*os.File); isFile && currentLogFile != nil {
 		n, err := currentLogFile.Write(formattedData)
+		if n > 0 {
+			l.watch.unsynced = true
+		}
 		if err != nil {
 			l.internalLog("failed to write to log file: %v\n", err)
 			l.handleFailedSend()
@@ -224,14 +227,14 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 	}
 }
 
-// handleFlushTick handles the periodic flush timer tick
+// handleFlushTick syncs a file written since its last successful sync, so an
+// idle logger makes no fsync calls
 func (l *Logger) handleFlushTick() {
-	c := l.getConfig()
-	enableSync := c.EnablePeriodicSync
-	if enableSync {
-		if err := l.performSync(); err != nil {
-			l.internalLog("failed to sync log file: %v\n", err)
-		}
+	if !l.watch.unsynced || !l.getConfig().EnablePeriodicSync {
+		return
+	}
+	if err := l.performSync(); err != nil {
+		l.internalLog("failed to sync log file: %v\n", err)
 	}
 }
 

@@ -190,6 +190,13 @@ func (b *Builder) MinDiskFreeMB(size int64) *Builder {
 	return b
 }
 
+// CleanupOwnFiles limits cleanup, retention and size limits to the logger's
+// own files, so the directory can be shared
+func (b *Builder) CleanupOwnFiles(enable bool) *Builder {
+	b.cfg.CleanupOwnFiles = enable
+	return b
+}
+
 // FlushIntervalMs sets the flush interval in milliseconds
 func (b *Builder) FlushIntervalMs(interval int64) *Builder {
 	b.cfg.FlushIntervalMs = interval

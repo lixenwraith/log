@@ -225,10 +225,10 @@ func TestExtensionlessAccountingAndCleanup(t *testing.T) {
 	for _, name := range []string{"old", "other.txt"} {
 		mustNoErr(t, os.WriteFile(filepath.Join(c.Directory, name), []byte("123"), 0600), "write")
 	}
-	size, err := l.getLogDirSize(c.Directory, "")
+	size, err := l.getLogDirSize(c)
 	mustNoErr(t, err, "size")
 	equal(t, size, int64(3), "extensionless size")
-	count, err := l.getLogFileCount(c.Directory, "")
+	count, err := l.getLogFileCount(c)
 	mustNoErr(t, err, "count")
 	equal(t, count, 2, "extensionless count")
 	mustNoErr(t, l.cleanOldLogs(0), "zero demand does not remove archives")

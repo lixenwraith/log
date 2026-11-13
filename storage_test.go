@@ -177,22 +177,24 @@ func TestLogDirAccounting(t *testing.T) {
 	// Non-matching extension must be excluded from both helpers
 	mustNoErr(t, os.WriteFile(filepath.Join(tmpDir, "notes.txt"), []byte("ignored"), 0644), "WriteFile txt")
 
-	dirSize, err := logger.getLogDirSize(tmpDir, "log")
+	c := logger.getConfig()
+	dirSize, err := logger.getLogDirSize(c)
 	mustNoErr(t, err, "getLogDirSize")
 	// The active file is present but empty
 	equal(t, dirSize, int64(files*size), "getLogDirSize")
 
-	count, err := logger.getLogFileCount(tmpDir, "log")
+	count, err := logger.getLogFileCount(c)
 	mustNoErr(t, err, "getLogFileCount")
 	equal(t, count, files+1, "getLogFileCount")
 
 	// Missing directories are not an error condition
-	missing := filepath.Join(tmpDir, "absent")
-	dirSize, err = logger.getLogDirSize(missing, "log")
+	c = c.Clone()
+	c.Directory = filepath.Join(tmpDir, "absent")
+	dirSize, err = logger.getLogDirSize(c)
 	mustNoErr(t, err, "getLogDirSize on missing dir")
 	equal(t, dirSize, int64(0), "size of missing dir")
 
-	count, err = logger.getLogFileCount(missing, "log")
+	count, err = logger.getLogFileCount(c)
 	mustNoErr(t, err, "getLogFileCount on missing dir")
 	equal(t, count, 0, "count of missing dir")
 }
@@ -219,6 +221,54 @@ func TestArchiveNaming(t *testing.T) {
 	}
 	isTrue(t, strings.HasPrefix(second, "log_"), "archive prefix")
 	isTrue(t, strings.HasSuffix(second, ".log"), "archive extension")
+}
+
+// With cleanup_own_files, size limits, cleanup and retention see only the
+// logger's file and the archives it names: other names, per-run names and
+// other programs' files sharing the directory survive.
+func TestCleanupOwnFilesSparesOtherFiles(t *testing.T) {
+	l := NewLogger()
+	c := DefaultConfig()
+	c.EnableConsole = false
+	c.EnableFile = true
+	c.Directory = t.TempDir()
+	c.Name = "app"
+	c.CleanupOwnFiles = true
+	c.RetentionPeriodHrs = 1
+	mustNoErr(t, l.ApplyConfig(c), "apply") // not started: the test runs cleanup
+	defer l.Shutdown()
+
+	old := time.Now().Add(-2 * time.Hour)
+	write := func(name string) {
+		path := filepath.Join(c.Directory, name)
+		mustNoErr(t, os.WriteFile(path, []byte("0123456789"), 0644), name)
+		mustNoErr(t, os.Chtimes(path, old, old), name)
+	}
+	var own []string
+	for range 3 { // the second and third archives take a counter
+		name := l.generateArchiveLogFileName(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
+		write(name)
+		own = append(own, name)
+	}
+	others := []string{"other.log", "other_260102_030405.log", "app-run2.log", "appx_260102_030405.log",
+		"app_260102.log", "app_260102_030405_.log", "app_260102_03040x.log", "app_260102_030405.txt"}
+	for _, name := range others {
+		write(name)
+	}
+
+	size, err := l.getLogDirSize(c)
+	mustNoErr(t, err, "size")
+	equal(t, size, int64(10*len(own)), "size counts the empty active file and the archives")
+	mustNoErr(t, l.cleanExpiredLogs(old), "retention")
+	for _, name := range own {
+		_, err := os.Stat(filepath.Join(c.Directory, name))
+		isTrue(t, os.IsNotExist(err), name+" expired")
+	}
+	errContains(t, l.cleanOldLogs(1), "no old logs", "other files are not candidates")
+	for _, name := range others {
+		_, err := os.Stat(filepath.Join(c.Directory, name))
+		noErr(t, err, name+" kept")
+	}
 }
 
 // followLogger returns a started txt logger writing dir/app.log, and the
