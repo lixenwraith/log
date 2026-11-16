@@ -93,15 +93,19 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 	// Trigger cleanup if needed and allowed by the 'forceCleanup' flag
 	if needsCleanupCheck && forceCleanup {
 		if err := l.cleanOldLogs(spaceToFree); err != nil {
+			// Once an episode, to the host's handler and, as a record, to the
+			// console: the file, which the low disk stops, could not take it
 			if !l.state.DiskFullLogged.Swap(true) {
-				diskFullRecord := logRecord{
-					Flags: FlagDefault | FlagKV, TimeStamp: time.Now(), Level: LevelError,
-					Args: []any{
-						"msg", "log directory full or disk space low, cleanup failed",
-						"error", err.Error(),
-					},
+				l.internalLog("log directory full or disk space low, records are dropped: %v\n", err)
+				if c.EnableConsole {
+					l.sendLogRecord(logRecord{
+						Flags: FlagDefault | FlagKV, TimeStamp: time.Now(), Level: LevelError,
+						Args: []any{
+							"msg", "log directory full or disk space low, cleanup failed",
+							"error", err.Error(),
+						},
+					})
 				}
-				l.sendLogRecord(diskFullRecord)
 			}
 			l.state.DiskStatusOK.Store(false)
 			return false
@@ -451,8 +455,11 @@ func (l *Logger) checkLogPath(now time.Time, force bool) bool {
 	return true
 }
 
-// rotateLogFile implements the rename-on-rotate strategy
-// Closes current file, renames it with timestamp, creates new static file
+// rotateLogFile implements the rename-on-rotate strategy: it closes the
+// current file, renames it with a timestamp and creates the static file anew.
+// A failure ends nothing: a file that could not be renamed is opened again
+// and written on, one that could not be created leaves none, and the next
+// call, which the processor makes after rotateRetryInterval, tries again.
 func (l *Logger) rotateLogFile() error {
 	c := l.getConfig()
 	currentPath := l.getStaticLogFilePath()
@@ -478,35 +485,32 @@ func (l *Logger) rotateLogFile() error {
 	}
 
 	l.state.CurrentFile.Store((*os.File)(nil))
+	l.watch.unsynced = false // nothing is open to sync
 
 	// Generate a new unique name with current timestamp for the old log file
 	archivePath := filepath.Join(c.Directory, l.generateArchiveLogFileName(time.Now()))
 
 	// Rename current file to archive name
-	if err := os.Rename(currentPath, archivePath); errors.Is(err, fs.ErrNotExist) {
+	renameErr := os.Rename(currentPath, archivePath)
+	if errors.Is(renameErr, fs.ErrNotExist) {
 		// Removed since the last path check: nothing to archive
 		l.internalLog("log file '%s' was removed before rotation, nothing to archive\n", currentPath)
-	} else if err != nil {
-		// Critical failure: the original file is closed and couldn't be renamed
-		// This is a terminal state for file logging
-		l.internalLog("failed to rename log file from '%s' to '%s': %v. file logging disabled.",
-			currentPath, archivePath, err)
-		l.state.LoggerDisabled.Store(true)
-		l.refreshLevelGate()
-		return fmtErrorf("failed to rotate log file, logging is disabled: %w", err)
+		renameErr = nil
 	}
 
-	// Create new log file at static path
+	// The static path: a new file once renamed, the same file when that failed
 	newFile, info, err := openLogPath(currentPath)
 	if err != nil {
-		l.state.LoggerDisabled.Store(true)
-		l.refreshLevelGate()
-		return fmtErrorf("failed to create new log file after rotation: %w", err)
+		return fmtErrorf("failed to open log file after rotation: %w", err)
 	}
-
-	// Update state
 	l.state.CurrentFile.Store(newFile)
 	l.state.CurrentSize.Store(info.Size())
+	if le, ok := renameErr.(*os.LinkError); ok {
+		// Without the archive's name, which differs at each try
+		return fmtErrorf("failed to rename log file '%s' to its archive, writing on in it: %w", currentPath, le.Err)
+	} else if renameErr != nil {
+		return renameErr
+	}
 	l.state.TotalRotations.Add(1)
 
 	// Update earliest file time after successful rotation
@@ -555,7 +559,9 @@ func matchesLogEntry(entry os.DirEntry, c *Config) bool {
 }
 
 // isOwnLogName reports whether file is base's active file or an archive that
-// generateArchiveLogFileName makes: base_YYMMDD_HHMMSS[_N], then the extension
+// generateArchiveLogFileName makes: base_YYMMDD_HHMMSS[_N], then the extension.
+// N counts from 1 and never nears six digits, which is what a sibling named
+// base_dddddd has in its place: the time of its own archive.
 func isOwnLogName(file, base, ext string) bool {
 	if ext != "" {
 		var ok bool
@@ -571,7 +577,7 @@ func isOwnLogName(file, base, ext string) bool {
 		return false
 	}
 	rest = rest[14:]
-	return rest == "" || len(rest) > 1 && rest[0] == '_' && isDigits(rest[1:])
+	return rest == "" || len(rest) > 1 && len(rest) <= 6 && rest[0] == '_' && rest[1] != '0' && isDigits(rest[1:])
 }
 
 func isDigits(s string) bool {

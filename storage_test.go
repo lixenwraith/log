@@ -1,6 +1,7 @@
 package log
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -250,8 +251,10 @@ func TestCleanupOwnFilesSparesOtherFiles(t *testing.T) {
 		write(name)
 		own = append(own, name)
 	}
+	// app_202611_260102_030405.log is the archive of a sibling named app_202611
 	others := []string{"other.log", "other_260102_030405.log", "app-run2.log", "appx_260102_030405.log",
-		"app_260102.log", "app_260102_030405_.log", "app_260102_03040x.log", "app_260102_030405.txt"}
+		"app_260102.log", "app_260102_030405_.log", "app_260102_03040x.log", "app_260102_030405.txt",
+		"app_202611_260102_030405.log", "app_260102_030405_01.log"}
 	for _, name := range others {
 		write(name)
 	}
@@ -381,6 +384,24 @@ func TestRotateRemovedLogFile(t *testing.T) {
 	mustNoErr(t, err, "new active file")
 }
 
+// A rotation that cannot make its file ends nothing: records drop, counted,
+// until the path opens again, and then reach the file
+func TestFailedRotationIsTriedAgain(t *testing.T) {
+	l, path, _ := followLogger(t, 1)
+	logFlush(t, l, strings.Repeat("a", 600))
+	dir := filepath.Dir(path)
+	mustNoErr(t, os.Rename(dir, dir+".away"), "mv directory")
+	l.Info(strings.Repeat("b", 600)) // over the size, and no directory to rotate in
+	mustEventually(t, time.Second, "record dropped", func() bool { return l.Dropped() == 1 })
+	mustNoErr(t, os.Rename(dir+".away", dir), "mv directory back")
+	time.Sleep(rotateRetryInterval)
+	logFlush(t, l, "after")
+	data, err := os.ReadFile(path)
+	mustNoErr(t, err, "read")
+	isTrue(t, strings.Contains(string(data), "after"), "record written once the path opens")
+	equal(t, l.Dropped(), uint64(1), "dropped")
+}
+
 // Flush and Stop reattach a moved log path at once, as after logrotate's create
 // mode; no record is processed in between, so only their check can reopen
 func TestFlushAndStopReattachMovedLogFile(t *testing.T) {
@@ -418,6 +439,25 @@ func TestCleanupSparesOpenFile(t *testing.T) {
 	_, err := os.Stat(moved)
 	mustNoErr(t, err, "open file kept")
 	equal(t, l.state.TotalDeletions.Load(), uint64(0), "deletions")
+}
+
+// A low disk stops the file alone: the console still shows the record, which
+// counts as dropped for the file it missed
+func TestLowDiskStopsTheFileNotTheConsole(t *testing.T) {
+	l, path, _ := followLogger(t, 0)
+	var console bytes.Buffer
+	l.SetConsoleWriter(&console)
+	c := l.GetConfig()
+	c.EnableConsole = true
+	mustNoErr(t, l.ApplyConfig(c), "ApplyConfig")
+	logFlush(t, l, "before")          // the processor ApplyConfig started has run its disk check
+	l.state.DiskStatusOK.Store(false) // as when min_disk_free_kb is not met
+	logFlush(t, l, "shown")
+	data, err := os.ReadFile(path)
+	mustNoErr(t, err, "read")
+	isTrue(t, strings.Contains(console.String(), "shown"), "console got the record")
+	isFalse(t, strings.Contains(string(data), "shown"), "file got the record")
+	equal(t, l.Dropped(), uint64(1), "dropped")
 }
 
 // A file removed to free disk space is followed while records are dropped for

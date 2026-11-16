@@ -8,7 +8,7 @@ import (
 type State struct {
 	// General state
 	IsInitialized   atomic.Bool // Tracks successful initialization, not start of log processor
-	LoggerDisabled  atomic.Bool // Tracks logger stop due to issues (e.g. disk full)
+	LoggerDisabled  atomic.Bool // Set at Shutdown: no record is taken
 	ShutdownCalled  atomic.Bool // Tracks if Shutdown() has been called, a terminal state
 	DiskFullLogged  atomic.Bool // Tracks if a disk full error has been logged to prevent log spam
 	DiskStatusOK    atomic.Bool // Tracks if disk space and size limits are currently met

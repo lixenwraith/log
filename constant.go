@@ -58,6 +58,9 @@ const (
 	// Record time between checks that the log path still names the open file;
 	// bounds the writes lost to a file replaced or removed under the logger
 	fileCheckInterval = 10 * time.Millisecond
+	// Record time between tries of a rotation that failed: until one succeeds
+	// records go to the file left under the path, or drop when none is
+	rotateRetryInterval = 100 * time.Millisecond
 	// Factors to adjust check interval
 	adaptiveIntervalFactor float64 = 1.5 // Slow down
 	adaptiveSpeedUpFactor  float64 = 0.8 // Speed up
