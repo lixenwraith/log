@@ -19,10 +19,11 @@ logger.ApplyConfigString(
 1. Before each write, the logger checks whether the active file would exceed `max_size_kb`.
 2. It closes the active `{name}.{extension}` file and renames it to `{name}_{YYMMDD}_{HHMMSS}[_N].{extension}`; a file already removed leaves nothing to archive.
 3. It opens a new active file. A counter suffix avoids existing names when rotations share a second.
+4. A rotation that fails is reported once and tried again every 100 ms of record time: a file that could not be renamed is written on under its name, past its size; while none can be opened, records drop and are counted.
 
 For example: `myapp.log` becomes `myapp_240115_143022.log`, then `myapp_240115_143022_1.log` on the next collision. Rotation does not split a record, so a single oversized record can exceed the size limit. File errors can drop records and are counted. Periodic sync, explicit `Flush`, and shutdown provide sync points; closing a file alone does not guarantee crash durability. Periodic sync runs only when the file was written since its last successful sync, so an idle logger makes no fsync calls.
 
-By default, use a directory owned exclusively by this logger: cleanup, retention and the total-size limit select regular files by extension, including files from earlier runs with different base names. With `cleanup_own_files`, they select only `{name}.{extension}` and its archives, so loggers with other names and other programs can share the directory; files of earlier runs under other names are then left alone. Either way they exclude the active filename, the file being written under any name, directories, and symlinks. With an empty extension, only extensionless files match. Console-only configurations never perform retention deletion. Total-size and free-space limits are checked periodically and can be exceeded between checks.
+By default, use a directory owned exclusively by this logger: cleanup, retention and the total-size limit select regular files by extension, including files from earlier runs with different base names. With `cleanup_own_files`, they select only `{name}.{extension}` and its archives (a counter of at most five digits), so loggers with other names and other programs can share the directory; files of earlier runs under other names are then left alone. Either way they exclude the active filename, the file being written under any name, directories, and symlinks. With an empty extension, only extensionless files match. Console-only configurations never perform retention deletion. Total-size and free-space limits are checked periodically and can be exceeded between checks.
 
 ### External Edits and Rotation
 
@@ -58,6 +59,8 @@ When limits are exceeded, the logger:
 2. Deletes them until space requirements are met
 3. Preserves the current active log file
 4. Increments deletion counters reported in disk heartbeats
+
+While a cleanup cannot meet the limits, records are not written to the file and count as dropped; the console still gets them. The episode is reported once: to the error handler, and as an ERROR record to the console when it is enabled.
 
 ### Example Configuration
 

@@ -156,7 +156,13 @@ func (s *Sanitizer) AppendSanitize(dst []byte, data string) []byte {
 	if len(s.rules) == 0 {
 		return append(dst, data...)
 	}
-	return s.appendSanitized(dst, normalizeUTF8(data))
+	// As Sanitize: what precedes the first match is copied whole
+	data = normalizeUTF8(data)
+	i := s.firstMatch(data)
+	if i < 0 {
+		return append(dst, data...)
+	}
+	return s.appendSanitized(append(dst, data[:i]...), data[i:])
 }
 
 // Repair malformed sequences before removing characters: otherwise deleting
@@ -397,19 +403,26 @@ func (se *Serializer) WriteJSON(buf *[]byte, v any) error {
 	}
 	// Marshal has already validated the JSON. Only string tokens need rewriting;
 	// copying the other bytes preserves numbers, booleans, and container shapes.
+	text := string(data) // tokens are cut from it for firstMatch, without a copy each
 	start := 0
 	for i := 0; i < len(data); i++ {
 		if data[i] != '"' {
 			continue
 		}
-		*buf = append(*buf, data[start:i]...)
-		end := i + 1
+		end, escaped := i+1, false
 		for data[end] != '"' {
 			if data[end] == '\\' {
-				end++
+				end, escaped = end+1, true
 			}
 			end++
 		}
+		// A token without an escape that no rule matches is already what the
+		// policy and the quoting write: it stays among the bytes copied
+		if !escaped && se.sanitizer.firstMatch(text[i+1:end]) < 0 {
+			i = end
+			continue
+		}
+		*buf = append(*buf, data[start:i]...)
 		var value string
 		_ = json.Unmarshal(data[i:end+1], &value)
 		quoted := Serializer{format: "json", sanitizer: se.sanitizer}

@@ -128,8 +128,10 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 		now = time.Now()
 	}
 	checked := enableFile && l.checkLogPath(now, false)
-	if enableFile && !l.state.DiskStatusOK.Load() {
-		// Simple increment of both counters
+	// A low disk stops the file alone: the console still gets the record, and
+	// with it the notice that the disk is low
+	diskLow := enableFile && !l.state.DiskStatusOK.Load()
+	if diskLow && !c.EnableConsole {
 		l.handleFailedSend()
 		return 0
 	}
@@ -182,19 +184,30 @@ func (l *Logger) processLogRecord(record logRecord) int64 {
 		}
 		return formattedDataLen // Return data length for adaptive interval calculations
 	}
+	if diskLow {
+		l.handleFailedSend()
+		return 0
+	}
 
 	// File rotation check, on the size read from the file: an external edit
-	// since the last check leaves CurrentSize stale
-	if maxSize := c.MaxSizeKB * sizeMultiplier; maxSize > 0 && l.state.CurrentSize.Load()+formattedDataLen > maxSize {
-		if !checked {
+	// since the last check leaves CurrentSize stale. A rotation that failed,
+	// leaving the file as it was or none, is tried again after
+	// rotateRetryInterval, and reported when its error is a new one.
+	open, _ := l.state.CurrentFile.Load().(*os.File)
+	maxSize := c.MaxSizeKB * sizeMultiplier
+	over := maxSize > 0 && l.state.CurrentSize.Load()+formattedDataLen > maxSize
+	if w := &l.watch; (over || open == nil) && !now.Before(w.retryAt) {
+		if over && !checked {
 			l.checkLogPath(now, true)
+			open, _ = l.state.CurrentFile.Load().(*os.File)
 		}
-		if l.state.CurrentSize.Load()+formattedDataLen > maxSize {
-			if err := l.rotateLogFile(); err != nil {
-				l.internalLog("failed to rotate log file: %v\n", err)
-				// Account for the dropped log that triggered the failed rotation
-				l.handleFailedSend()
-				return 0
+		if open == nil || l.state.CurrentSize.Load()+formattedDataLen > maxSize {
+			err := l.rotateLogFile()
+			if err == nil {
+				w.failed = ""
+			} else if w.retryAt = now.Add(rotateRetryInterval); err.Error() != w.failed {
+				w.failed = err.Error()
+				l.internalLog("failed to rotate log file, trying again: %v\n", err)
 			}
 		}
 	}

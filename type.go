@@ -45,6 +45,8 @@ type fileWatch struct {
 	lastCheck time.Time   // record time of the last path check
 	warned    bool        // a refused or failed reopen was reported
 	unsynced  bool        // written since the last successful sync
+	retryAt   time.Time   // record time before which a failed rotation is not tried again
+	failed    string      // that failure as last reported, "" once a rotation succeeds
 }
 
 // sink holds the console writers in one atomic.Value; warn takes split's
