@@ -257,7 +257,8 @@ func applyTransform(buf *[]byte, r rune, transformMask uint64) {
 			*buf = append(*buf, '\\', '\\')
 		default:
 			if r < 0x20 || r >= 0x7f && r <= 0x9f {
-				*buf = append(*buf, fmt.Sprintf("\\u%04x", r)...)
+				const digits = "0123456789abcdef"
+				*buf = append(*buf, '\\', 'u', '0', '0', digits[r>>4], digits[r&0xf])
 			} else {
 				*buf = utf8.AppendRune(*buf, r)
 			}

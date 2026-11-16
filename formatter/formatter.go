@@ -153,7 +153,7 @@ func (f *Formatter) Format(flags int64, timestamp time.Time, level int64, trace 
 // FormatCtx is Format with caller-stamped context.
 // Returned slice aliases the internal buffer.
 func (f *Formatter) FormatCtx(ctx Context, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
-	f.buf = f.AppendFormatCtx(f.buf[:0], ctx, flags, timestamp, level, trace, args)
+	f.buf = f.AppendFormatCtx(f.scratch(), ctx, flags, timestamp, level, trace, args)
 	return f.buf
 }
 
@@ -178,7 +178,7 @@ func (f *Formatter) AppendFormatCtx(dst []byte, ctx Context, flags int64, timest
 // FormatWithOptions formats with explicit format and flags, ignoring
 // configured display defaults. Returned slice aliases the internal buffer.
 func (f *Formatter) FormatWithOptions(format string, flags int64, timestamp time.Time, level int64, trace string, args []any) []byte {
-	f.buf = f.AppendFormatWithOptionsCtx(f.buf[:0], format, Context{}, flags, timestamp, level, trace, args)
+	f.buf = f.AppendFormatWithOptionsCtx(f.scratch(), format, Context{}, flags, timestamp, level, trace, args)
 	return f.buf
 }
 
@@ -256,7 +256,7 @@ func normalizeFormat(format string) string {
 
 // FormatValue formats a single value. Returned slice aliases the internal buffer.
 func (f *Formatter) FormatValue(v any) []byte {
-	f.buf = f.AppendValue(f.buf[:0], v)
+	f.buf = f.AppendValue(f.scratch(), v)
 	return f.buf
 }
 
@@ -267,7 +267,7 @@ func (f *Formatter) AppendValue(dst []byte, v any) []byte {
 
 // FormatArgs formats multiple arguments. Returned slice aliases the internal buffer.
 func (f *Formatter) FormatArgs(args ...any) []byte {
-	f.buf = f.AppendArgs(f.buf[:0], args...)
+	f.buf = f.AppendArgs(f.scratch(), args...)
 	return f.buf
 }
 
@@ -563,6 +563,18 @@ func (f *Formatter) appendTxt(dst []byte, ctx Context, flags int64, timestamp ti
 
 	dst = append(dst, '\n')
 	return dst
+}
+
+// maxKeptBuffer bounds the buffer a buffered call leaves for the next: a rare
+// large record's is not held for the formatter's life
+const maxKeptBuffer = 64 << 10
+
+// scratch is the internal buffer, emptied for a buffered call
+func (f *Formatter) scratch() []byte {
+	if cap(f.buf) > maxKeptBuffer {
+		f.buf = nil
+	}
+	return f.buf[:0]
 }
 
 // Reset clears the internal buffer for reuse

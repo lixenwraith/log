@@ -441,6 +441,24 @@ func TestCleanupSparesOpenFile(t *testing.T) {
 	equal(t, l.state.TotalDeletions.Load(), uint64(0), "deletions")
 }
 
+// An active file that alone exceeds the total, one record larger than it, is
+// rotated out and deleted: kept, it would stop every later record for good
+func TestActiveFileOverTheTotalIsRotatedOut(t *testing.T) {
+	l, path, _ := followLogger(t, 1)
+	c := l.GetConfig()
+	c.MaxTotalSizeKB = 1
+	mustNoErr(t, l.ApplyConfig(c), "ApplyConfig")
+	logFlush(t, l, strings.Repeat("a", 1500))
+	mustNoErr(t, l.Stop(5*time.Second), "Stop") // own the file state from the test goroutine
+	isTrue(t, l.performDiskCheck(true), "disk check")
+	fi, err := os.Stat(path)
+	mustNoErr(t, err, "active file")
+	equal(t, fi.Size(), int64(0), "active file after the rotation")
+	entries, err := os.ReadDir(filepath.Dir(path))
+	mustNoErr(t, err, "ReadDir")
+	equal(t, len(entries), 1, "files left, the active one alone")
+}
+
 // A low disk stops the file alone: the console still shows the record, which
 // counts as dropped for the file it missed
 func TestLowDiskStopsTheFileNotTheConsole(t *testing.T) {

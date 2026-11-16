@@ -60,7 +60,7 @@ When limits are exceeded, the logger:
 3. Preserves the current active log file
 4. Increments deletion counters reported in disk heartbeats
 
-While a cleanup cannot meet the limits, records are not written to the file and count as dropped; the console still gets them. The episode is reported once: to the error handler, and as an ERROR record to the console when it is enabled.
+An active file that alone exceeds the total, one record larger than it, is rotated and deleted with the archives. While a cleanup cannot meet the limits, records are not written to the file and count as dropped; the console still gets them. The episode is reported once: to the error handler, and as an ERROR record to the console when it is enabled.
 
 ### Example Configuration
 
