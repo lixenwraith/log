@@ -66,6 +66,7 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 
 	// Determine if cleanup is needed based on disk space and total log size
 	needsCleanupCheck := false
+	overTotal := false // the total alone asks for the cleanup
 	spaceToFree := int64(0)
 	if minFreeRequired > 0 && freeSpace < minFreeRequired {
 		needsCleanupCheck = true
@@ -82,6 +83,7 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 			return false
 		}
 		if dirSize > maxTotal {
+			overTotal = !needsCleanupCheck
 			needsCleanupCheck = true
 			amountOver := dirSize - maxTotal
 			if amountOver > spaceToFree {
@@ -92,7 +94,14 @@ func (l *Logger) performDiskCheck(forceCleanup bool) bool {
 
 	// Trigger cleanup if needed and allowed by the 'forceCleanup' flag
 	if needsCleanupCheck && forceCleanup {
-		if err := l.cleanOldLogs(spaceToFree); err != nil {
+		err := l.cleanOldLogs(spaceToFree)
+		// Over the total with no archive left, the active file alone exceeds
+		// it, a record larger than the total in it: rotated, it is an archive
+		// the cleanup takes. Kept, it would stop every record for good.
+		if err != nil && overTotal && l.state.CurrentSize.Load() > 0 && l.rotateLogFile() == nil {
+			err = l.cleanOldLogs(spaceToFree)
+		}
+		if err != nil {
 			// Once an episode, to the host's handler and, as a record, to the
 			// console: the file, which the low disk stops, could not take it
 			if !l.state.DiskFullLogged.Swap(true) {
